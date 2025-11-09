@@ -19,9 +19,14 @@ import type { UploadPayload } from '../types'
 const presetTags = ['血常规', 'CT', 'B超', '心电图', 'X光', 'MRI']
 
 export const UploadPage: React.FC = () => {
+  console.log('[UploadPage] 组件已加载')
+  
   const navigate = useNavigate()
   const { setHeaderConfig } = useOutletContext<AppShellContextValue>()
   const { addReport } = useAppState()
+  
+  console.log('[UploadPage] addReport 函数:', typeof addReport)
+  
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [title, setTitle] = useState('2024年1月血常规检查')
   const [hospital, setHospital] = useState('北京协和医院')
@@ -71,18 +76,22 @@ export const UploadPage: React.FC = () => {
   }
 
   const simulateUpload = async () => {
+    console.log('[UploadPage] simulateUpload 被调用', {
+      hasSelectedFile: !!selectedFile,
+      fileName: selectedFile?.name,
+      fileSize: selectedFile?.size,
+    })
+
     if (!selectedFile) {
+      console.error('[UploadPage] 错误：没有选择文件')
       setError('请先选择或拖拽文件')
       return
     }
+
     setError(null)
     setStatus('uploading')
     setProgress(0)
-    const uploadSteps = [12, 28, 53, 76, 100]
-    for (const step of uploadSteps) {
-      await new Promise((resolve) => setTimeout(resolve, 400))
-      setProgress(step)
-    }
+
     const payload: UploadPayload = {
       title,
       hospital,
@@ -91,11 +100,34 @@ export const UploadPage: React.FC = () => {
       notes,
       file: selectedFile,
     }
-    addReport(payload)
-    setStatus('success')
-    setTimeout(() => {
-      navigate('/archive', { replace: true })
-    }, 1200)
+
+    console.log('[UploadPage] 准备调用 addReport', {
+      payload: {
+        ...payload,
+        file: {
+          name: payload.file?.name,
+          size: payload.file?.size,
+          type: payload.file?.type,
+        },
+      },
+    })
+
+    try {
+      await addReport(payload, (progress) => {
+        console.log('[UploadPage] 上传进度:', progress)
+        setProgress(progress)
+      })
+      console.log('[UploadPage] 上传成功')
+      setStatus('success')
+      setTimeout(() => {
+        navigate('/archive', { replace: true })
+      }, 1200)
+    } catch (err) {
+      console.error('[UploadPage] 上传失败:', err)
+      setError(err instanceof Error ? err.message : '上传失败，请稍后重试')
+      setStatus('idle')
+      setProgress(0)
+    }
   }
 
   const handleDrop = (event: ReactDragEvent<HTMLLabelElement>) => {
@@ -287,9 +319,32 @@ export const UploadPage: React.FC = () => {
       ) : null}
 
       <button
-        onClick={simulateUpload}
+        type="button"
+        onClick={(e) => {
+          console.log('[UploadPage] ====== 按钮点击事件触发 ======')
+          e.preventDefault()
+          e.stopPropagation()
+          console.log('[UploadPage] 按钮被点击！', {
+            status,
+            hasSelectedFile: !!selectedFile,
+            selectedFile: selectedFile?.name,
+            addReportType: typeof addReport,
+          })
+          
+          // 直接测试
+          if (!selectedFile) {
+            alert('请先选择文件！')
+            return
+          }
+          
+          console.log('[UploadPage] 开始调用 simulateUpload')
+          simulateUpload()
+        }}
+        onMouseDown={() => console.log('[UploadPage] 按钮 onMouseDown')}
+        onMouseUp={() => console.log('[UploadPage] 按钮 onMouseUp')}
         disabled={status === 'uploading'}
         className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary py-4 text-base font-semibold text-white shadow-lg shadow-primary/30 transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:bg-primary/60"
+        style={{ position: 'relative', zIndex: 1000 }}
       >
         <FaCloudUploadAlt className="text-lg" />
         {status === 'uploading' ? '正在上传...' : '确认上传'}

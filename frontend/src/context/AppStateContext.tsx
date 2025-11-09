@@ -1,90 +1,217 @@
-import { createContext, useContext, useMemo, useState } from 'react'
-import dayjs from 'dayjs'
-import { metricSeries as initialMetricSeries } from '../data/mockMetrics'
-import { mockReports } from '../data/mockReports'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react'
+import { api } from '../lib/api'
 import type { MetricEntry, MetricSeries, Report, UploadPayload } from '../types'
-import { nanoid } from '../lib/nanoid'
+import { useAuth } from './AuthContext'
 
 interface AppStateContextValue {
   reports: Report[]
   metricSeries: MetricSeries[]
-  addReport: (payload: UploadPayload) => Report
-  deleteReport: (reportId: string) => void
-  addMetricEntry: (entry: Omit<MetricEntry, 'id'>) => MetricEntry
+  loading: boolean
+  error: string | null
+  addReport: (
+    payload: UploadPayload,
+    onProgress?: (progress: number) => void,
+  ) => Promise<Report>
+  deleteReport: (reportId: string) => Promise<void>
+  addMetricEntry: (entry: Omit<MetricEntry, 'id'>) => Promise<MetricEntry>
+  refreshReports: () => Promise<void>
+  refreshMetrics: () => Promise<void>
 }
 
-const AppStateContext = createContext<AppStateContextValue | undefined>(undefined)
+const AppStateContext = createContext<AppStateContextValue | undefined>(
+  undefined,
+)
 
-export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [reports, setReports] = useState<Report[]>(() => mockReports)
-  const [metrics, setMetrics] = useState<MetricSeries[]>(() => initialMetricSeries)
+export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => {
+  const { isAuthenticated } = useAuth()
+  const [reports, setReports] = useState<Report[]>([])
+  const [metrics, setMetrics] = useState<MetricSeries[]>([])
+  const [loading, setLoading] = useState<boolean>(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const addReport = (payload: UploadPayload): Report => {
-    const now = dayjs()
-    const newReport: Report = {
-      id: nanoid(),
-      title: payload.title,
-      hospital: payload.hospital,
-      reportDate: payload.reportDate,
-      fileSizeMb: payload.file ? Number((payload.file.size / (1024 * 1024)).toFixed(2)) : 2.1,
-      fileType: payload.file
-        ? payload.file.type.includes('pdf')
-          ? 'pdf'
-          : payload.file.type.startsWith('image/')
-            ? 'image'
-            : 'other'
-        : 'pdf',
-      tags: payload.tags,
-      notes: payload.notes,
-      previewImageUrl:
-        payload.file && payload.file.type.startsWith('image/')
-          ? URL.createObjectURL(payload.file)
-          : 'https://images.unsplash.com/photo-1559757148-5c350d0d3c56?w=1200',
-      createdAt: now.toISOString(),
-      updatedAt: now.toISOString(),
+  const loadReports = async () => {
+    if (!isAuthenticated) return
+
+    try {
+      setLoading(true)
+      setError(null)
+      const response = await api.listReports({ limit: 100 })
+      // Convert API response to frontend Report type
+      const reports: Report[] = response.items.map((item) => ({
+        id: item.id,
+        title: item.title,
+        hospital: item.hospital,
+        reportDate: item.reportDate,
+        fileSizeMb: item.fileSizeMb,
+        fileType: (item.fileType as Report['fileType']) || 'pdf',
+        tags: item.tags || [],
+        notes: item.notes,
+        previewImageUrl: item.previewUrl || item.fileUrl || '',
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+      }))
+      setReports(reports)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '加载报告失败'
+      setError(message)
+      console.error('Failed to load reports:', err)
+    } finally {
+      setLoading(false)
     }
-
-    setReports((prev) => [newReport, ...prev])
-    return newReport
   }
 
-  const deleteReport = (reportId: string) => {
-    setReports((prev) => prev.filter((report) => report.id !== reportId))
+  const loadMetrics = async () => {
+    if (!isAuthenticated) return
+
+    try {
+      setLoading(true)
+      setError(null)
+      const entries = await api.listMetrics({ limit: 1000 })
+      const series = api.convertEntriesToSeries(entries)
+      setMetrics(series)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '加载指标失败'
+      setError(message)
+      console.error('Failed to load metrics:', err)
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const addMetricEntry = (entry: Omit<MetricEntry, 'id'>): MetricEntry => {
-    const newEntry: MetricEntry = { ...entry, id: nanoid() }
-    setMetrics((prev) =>
-      prev.map((series) =>
-        series.metricType === entry.metricType
-          ? {
-              ...series,
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadReports()
+      loadMetrics()
+    } else {
+      setReports([])
+      setMetrics([])
+    }
+  }, [isAuthenticated])
+
+  const addReport = async (
+    payload: UploadPayload,
+    onProgress?: (progress: number) => void,
+  ): Promise<Report> => {
+    console.log('[AppStateContext] addReport 被调用', {
+      hasFile: !!payload.file,
+      fileName: payload.file?.name,
+      hasProgressCallback: typeof onProgress === 'function',
+    })
+    
+    try {
+      setError(null)
+      console.log('[AppStateContext] 调用 api.createReport')
+      const newReport = await api.createReport(payload, onProgress)
+      console.log('[AppStateContext] api.createReport 成功', newReport)
+      setReports((prev) => [newReport, ...prev])
+      return newReport
+    } catch (err) {
+      console.error('[AppStateContext] addReport 失败:', err)
+      const message = err instanceof Error ? err.message : '创建报告失败'
+      setError(message)
+      throw new Error(message)
+    }
+  }
+
+  const deleteReport = async (reportId: string) => {
+    try {
+      setError(null)
+      await api.deleteReport(reportId)
+      setReports((prev) => prev.filter((report) => report.id !== reportId))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '删除报告失败'
+      setError(message)
+      throw new Error(message)
+    }
+  }
+
+  const addMetricEntry = async (
+    entry: Omit<MetricEntry, 'id'>,
+  ): Promise<MetricEntry> => {
+    try {
+      setError(null)
+      const newEntry = await api.createMetric(entry)
+      
+      // Update local state
+      setMetrics((prev) => {
+        const existingSeries = prev.find(
+          (s) => s.metricType === entry.metricType,
+        )
+        if (existingSeries) {
+          return prev.map((series) =>
+            series.metricType === entry.metricType
+              ? {
+                  ...series,
+                  data: [
+                    ...series.data,
+                    {
+                      recordedAt: entry.recordedAt,
+                      value: entry.primaryValue,
+                      secondaryValue: entry.secondaryValue,
+                    },
+                  ].sort(
+                    (a, b) =>
+                      new Date(a.recordedAt).getTime() -
+                      new Date(b.recordedAt).getTime(),
+                  ),
+                }
+              : series,
+          )
+        } else {
+          return [
+            ...prev,
+            {
+              metricType: entry.metricType as MetricSeries['metricType'],
+              unit: entry.unit,
               data: [
-                ...series.data,
                 {
                   recordedAt: entry.recordedAt,
                   value: entry.primaryValue,
                   secondaryValue: entry.secondaryValue,
                 },
-              ].sort(
-                (a, b) => dayjs(a.recordedAt).valueOf() - dayjs(b.recordedAt).valueOf(),
-              ),
-            }
-          : series,
-      ),
-    )
-    return newEntry
+              ],
+            },
+          ]
+        }
+      })
+      
+      return newEntry
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '创建指标失败'
+      setError(message)
+      throw new Error(message)
+    }
+  }
+
+  const refreshReports = async () => {
+    await loadReports()
+  }
+
+  const refreshMetrics = async () => {
+    await loadMetrics()
   }
 
   const value = useMemo<AppStateContextValue>(
     () => ({
       reports,
       metricSeries: metrics,
+      loading,
+      error,
       addReport,
       deleteReport,
       addMetricEntry,
+      refreshReports,
+      refreshMetrics,
     }),
-    [reports, metrics],
+    [reports, metrics, loading, error],
   )
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>

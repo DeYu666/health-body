@@ -41,11 +41,15 @@ export const ReportDetailPage: React.FC = () => {
     )
   }
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     const confirmed = window.confirm('确定要删除这份报告吗？此操作无法撤销。')
     if (confirmed) {
-      deleteReport(report.id)
-      navigate('/archive', { replace: true })
+      try {
+        await deleteReport(report.id)
+        navigate('/archive', { replace: true })
+      } catch (err) {
+        alert(err instanceof Error ? err.message : '删除失败，请稍后重试')
+      }
     }
   }
 

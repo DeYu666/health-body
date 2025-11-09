@@ -30,12 +30,20 @@ type AuthConfig struct {
 	RefreshTokenTTL time.Duration
 }
 
+type QiniuConfig struct {
+	AccessKey string
+	SecretKey string
+	Bucket    string
+	Domain    string
+}
+
 type Config struct {
 	AppName string
 	Env     string
 	HTTP    HTTPConfig
 	DB      DatabaseConfig
 	Auth    AuthConfig
+	Qiniu   QiniuConfig
 }
 
 func Load() *Config {
@@ -61,6 +69,12 @@ func Load() *Config {
 			JWTSecret:       getEnv("JWT_SECRET", "change-me-in-production"),
 			TokenTTL:        getEnvAsDuration("JWT_TOKEN_TTL", 24*time.Hour),
 			RefreshTokenTTL: getEnvAsDuration("JWT_REFRESH_TTL", 14*24*time.Hour),
+		},
+		Qiniu: QiniuConfig{
+			AccessKey: getEnv("QINIU_ACCESS_KEY", ""),
+			SecretKey: getEnv("QINIU_SECRET_KEY", ""),
+			Bucket:    getEnv("QINIU_BUCKET", "myfreespacep"),
+			Domain:    getEnv("QINIU_DOMAIN", ""),
 		},
 	}
 

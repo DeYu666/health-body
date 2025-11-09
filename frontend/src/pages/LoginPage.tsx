@@ -92,7 +92,14 @@ export const LoginPage: React.FC = () => {
 
           {isPinEnabled ? (
             <button
-              onClick={() => navigate('/pin')}
+              onClick={() => {
+                if (email) {
+                  localStorage.setItem('last_email', email)
+                  navigate('/pin', { state: { email } })
+                } else {
+                  navigate('/pin')
+                }
+              }}
               className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-primary hover:text-primary"
             >
               <FaKey />

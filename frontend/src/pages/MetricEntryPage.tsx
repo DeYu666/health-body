@@ -52,20 +52,24 @@ export const MetricEntryPage: React.FC = () => {
     }
     setError(null)
     setStatus('saving')
-    await new Promise((resolve) => setTimeout(resolve, 500))
-    addMetricEntry({
-      metricType: type,
-      primaryValue: Number(primaryValue),
-      secondaryValue:
-        type === 'blood-pressure' ? Number(secondaryValue || '0') || undefined : undefined,
-      unit: currentOption.unit,
-      recordedAt: dayjs(recordTime).toISOString(),
-      notes,
-    })
-    setStatus('success')
-    setTimeout(() => {
-      navigate('/metrics/trends', { replace: true })
-    }, 800)
+    try {
+      await addMetricEntry({
+        metricType: type,
+        primaryValue: Number(primaryValue),
+        secondaryValue:
+          type === 'blood-pressure' ? Number(secondaryValue || '0') || undefined : undefined,
+        unit: currentOption.unit,
+        recordedAt: dayjs(recordTime).toISOString(),
+        notes,
+      })
+      setStatus('success')
+      setTimeout(() => {
+        navigate('/metrics/trends', { replace: true })
+      }, 800)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存失败，请稍后重试')
+      setStatus('idle')
+    }
   }
 
   const handleTypeChange = (event: ChangeEvent<HTMLSelectElement>) => {

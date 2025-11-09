@@ -12,7 +12,7 @@ func CORS(cfg *config.Config) gin.HandlerFunc {
 	corsConfig := cors.Config{
 		AllowOrigins:     cfg.HTTP.AllowedOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Authorization", "Content-Type", "X-Requested-With"},
+		AllowHeaders:     []string{"Authorization", "Content-Type", "X-Requested-With", "X-User-ID"},
 		AllowCredentials: true,
 		MaxAge:           12 * 60 * 60,
 	}

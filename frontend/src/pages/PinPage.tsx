@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { FaBackspace, FaFingerprint } from 'react-icons/fa'
 import clsx from 'classnames'
 import { useAuth } from '../context/AuthContext'
@@ -8,18 +8,37 @@ const PIN_LENGTH = 6
 
 export const PinPage: React.FC = () => {
   const navigate = useNavigate()
-  const { verifyPin } = useAuth()
+  const location = useLocation()
+  const { verifyPin, user } = useAuth()
   const [pin, setPin] = useState<number[]>([])
   const [status, setStatus] = useState<'idle' | 'verifying' | 'error'>('idle')
+  const [email, setEmail] = useState<string>(
+    () =>
+      (location.state as { email?: string })?.email ||
+      user?.email ||
+      localStorage.getItem('last_email') ||
+      '',
+  )
 
   useEffect(() => {
-    if (pin.length === PIN_LENGTH) {
+    if (pin.length === PIN_LENGTH && email) {
       const verify = async () => {
         setStatus('verifying')
-        const isValid = await verifyPin(pin.join(''))
-        if (isValid) {
-          navigate('/dashboard', { replace: true })
-        } else {
+        try {
+          const isValid = await verifyPin(email, pin.join(''))
+          if (isValid) {
+            if (email) {
+              localStorage.setItem('last_email', email)
+            }
+            navigate('/dashboard', { replace: true })
+          } else {
+            setStatus('error')
+            setTimeout(() => {
+              setStatus('idle')
+              setPin([])
+            }, 1200)
+          }
+        } catch (err) {
           setStatus('error')
           setTimeout(() => {
             setStatus('idle')
@@ -29,7 +48,7 @@ export const PinPage: React.FC = () => {
       }
       verify()
     }
-  }, [pin, verifyPin, navigate])
+  }, [pin, email, verifyPin, navigate])
 
   const handleDigit = (digit: number) => {
     if (pin.length >= PIN_LENGTH || status === 'verifying') return
@@ -60,6 +79,26 @@ export const PinPage: React.FC = () => {
             <p className="mt-2 text-sm font-semibold text-danger">PIN 码错误，请再次尝试</p>
           ) : null}
         </div>
+
+        {!email && (
+          <div className="w-full">
+            <label className="block text-left text-sm font-semibold text-slate-700">
+              邮箱地址
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => {
+                setEmail(e.target.value)
+                if (e.target.value) {
+                  localStorage.setItem('last_email', e.target.value)
+                }
+              }}
+              placeholder="your@email.com"
+              className="mt-2 w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+            />
+          </div>
+        )}
 
         <div className="flex items-center justify-center gap-3">
           {Array.from({ length: PIN_LENGTH }).map((_, index) => (

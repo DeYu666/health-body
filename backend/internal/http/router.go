@@ -18,6 +18,7 @@ type HandlerRegistry struct {
 	Reports *handlers.ReportHandler
 	Metrics *handlers.MetricHandler
 	Health  *handlers.HealthHandler
+	Upload  *handlers.UploadHandler
 }
 
 func NewRouter(cfg *config.Config, registry HandlerRegistry) *Router {
@@ -28,9 +29,14 @@ func NewRouter(cfg *config.Config, registry HandlerRegistry) *Router {
 	engine := gin.New()
 	engine.Use(gin.Logger(), gin.Recovery(), middleware.CORS(cfg))
 
+	// 设置文件上传大小限制（默认 32MB，这里设置为 100MB）
+	engine.MaxMultipartMemory = 100 << 20 // 100 MB
+
 	engine.GET("/healthz", registry.Health.Liveness)
 
 	api := engine.Group("/api/v1")
+	// 添加 JWT 认证中间件（可选，不强制要求）
+	api.Use(middleware.JWTAuth(cfg))
 
 	auth := api.Group("/auth")
 	{
@@ -38,7 +44,9 @@ func NewRouter(cfg *config.Config, registry HandlerRegistry) *Router {
 		auth.POST("/pin", registry.Auth.PinLogin)
 	}
 
+	// 需要认证的路由组
 	reports := api.Group("/reports")
+	reports.Use(middleware.RequireAuth())
 	{
 		reports.GET("", registry.Reports.ListReports)
 		reports.POST("", registry.Reports.CreateReport)
@@ -47,10 +55,20 @@ func NewRouter(cfg *config.Config, registry HandlerRegistry) *Router {
 	}
 
 	metrics := api.Group("/metrics")
+	metrics.Use(middleware.RequireAuth())
 	{
 		metrics.GET("", registry.Metrics.ListMetrics)
 		metrics.POST("", registry.Metrics.CreateMetric)
 		metrics.GET("/trend", registry.Metrics.TrendSummary)
+	}
+
+	// 文件上传路由
+	if registry.Upload != nil {
+		upload := api.Group("/upload")
+		upload.Use(middleware.RequireAuth())
+		{
+			upload.POST("/file", registry.Upload.UploadFile)
+		}
 	}
 
 	engine.NoRoute(func(c *gin.Context) {

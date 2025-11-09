@@ -41,6 +41,13 @@ func main() {
 	reportService := service.NewReportService(reportRepo)
 	metricService := service.NewMetricService(metricRepo)
 
+	uploadService, err := service.NewUploadService(cfg)
+	if err != nil {
+		log.Printf("warning: failed to initialize upload service: %v", err)
+		log.Println("file upload functionality will be disabled")
+		uploadService = nil
+	}
+
 	seedDemoAccount(userRepo)
 
 	registry := apphttp.HandlerRegistry{
@@ -48,6 +55,7 @@ func main() {
 		Reports: handlers.NewReportHandler(reportService),
 		Metrics: handlers.NewMetricHandler(metricService),
 		Health:  handlers.NewHealthHandler(),
+		Upload:  handlers.NewUploadHandler(uploadService),
 	}
 
 	router := apphttp.NewRouter(cfg, registry)

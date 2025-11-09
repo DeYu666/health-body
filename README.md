@@ -34,7 +34,7 @@ cp .env.example .env            # optional: adjust VITE_API_BASE_URL
 npm run dev                     # starts on http://localhost:5173
 ```
 
-- Uses mock data via React context so UI can be exercised without the backend.
+- **已接入后端 API**：前端现在使用真实的后端 API，不再使用 mock 数据。
 - Charts are powered by `react-chartjs-2` with time-series adapters.
 - Mobile layout is the primary experience; desktop adds an enhanced sidebar.
 - Demo credentials: `demo@example.com / demo1234` or PIN `123456`.
@@ -94,9 +94,10 @@ Services:
 | `GET  /api/v1/metrics`      | List metric entries (filterable)              |
 | `POST /api/v1/metrics`      | Record a new metric value                     |
 | `GET  /api/v1/metrics/trend`| Aggregate summary + time-series               |
+| `POST /api/v1/upload/file` | Upload file to Qiniu Cloud storage           |
 | `GET  /healthz`             | Liveness probe                                |
 
-> **Note**: File storage is stubbed—`fileUrl` and `previewUrl` fields are handled as metadata only. Integrate with S3/GCS/etc. to persist binaries.
+> **Note**: File storage is integrated with **Qiniu Cloud**. Configure `QINIU_ACCESS_KEY` and `QINIU_SECRET_KEY` in environment variables.
 
 ### Build/Format
 
@@ -114,15 +115,24 @@ go build ./...
 | `CORS_ALLOWED_ORIGINS`   | CSV of allowed origins                     | `http://localhost:5173,...`            |
 | `JWT_SECRET`             | HMAC secret key                            | `change-me`                            |
 | `JWT_TOKEN_TTL`          | Access token lifetime                      | `24h`                                  |
+| `QINIU_ACCESS_KEY`       | Qiniu Cloud Access Key (required)         | -                                      |
+| `QINIU_SECRET_KEY`       | Qiniu Cloud Secret Key (required)          | -                                      |
+| `QINIU_BUCKET`           | Qiniu Cloud bucket name                    | `health-body`                          |
+| `QINIU_DOMAIN`           | Qiniu Cloud domain (optional)              | Auto-generated from bucket             |
 
 ---
 
 ## Integrating Frontend & Backend
 
 1. Start PostgreSQL + backend (`docker compose up` or via Go).
-2. Update `frontend/.env` with `VITE_API_BASE_URL=http://localhost:8080/api/v1`.
-3. Point network requests to the backend (currently the UI ships with mock data; swap to live fetches as you wire up API calls).
-4. Use demo credentials to test end-to-end flows.
+2. Configure Qiniu Cloud credentials in `backend/.env`:
+   ```env
+   QINIU_ACCESS_KEY=your_access_key
+   QINIU_SECRET_KEY=your_secret_key
+   QINIU_BUCKET=health-body
+   ```
+3. Update `frontend/.env` with `VITE_API_BASE_URL=http://localhost:8080/api/v1`.
+4. Use demo credentials (`demo@example.com / demo1234`) to test end-to-end flows.
 
 ---
 
