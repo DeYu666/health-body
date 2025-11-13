@@ -37,13 +37,31 @@ type QiniuConfig struct {
 	Domain    string
 }
 
+type CloudreveConfig struct {
+	BaseURL      string
+	Email        string
+	Password     string
+	PolicyID     string
+	AccessToken  string // 可选，如果提供则跳过登录
+	RefreshToken string // 可选，用于刷新 token
+}
+
+type UploadProvider string
+
+const (
+	UploadProviderQiniu     UploadProvider = "qiniu"
+	UploadProviderCloudreve UploadProvider = "cloudreve"
+)
+
 type Config struct {
-	AppName string
-	Env     string
-	HTTP    HTTPConfig
-	DB      DatabaseConfig
-	Auth    AuthConfig
-	Qiniu   QiniuConfig
+	AppName        string
+	Env            string
+	HTTP           HTTPConfig
+	DB             DatabaseConfig
+	Auth           AuthConfig
+	Qiniu          QiniuConfig
+	Cloudreve      CloudreveConfig
+	UploadProvider UploadProvider // 上传渠道选择
 }
 
 func Load() *Config {
@@ -76,6 +94,15 @@ func Load() *Config {
 			Bucket:    getEnv("QINIU_BUCKET", "myfreespacep"),
 			Domain:    getEnv("QINIU_DOMAIN", ""),
 		},
+		Cloudreve: CloudreveConfig{
+			BaseURL:      getEnv("CLOUDREVE_BASE_URL", ""),
+			Email:        getEnv("CLOUDREVE_EMAIL", ""),
+			Password:     getEnv("CLOUDREVE_PASSWORD", ""),
+			PolicyID:     getEnv("CLOUDREVE_POLICY_ID", ""),
+			AccessToken:  getEnv("CLOUDREVE_ACCESS_TOKEN", ""),
+			RefreshToken: getEnv("CLOUDREVE_REFRESH_TOKEN", ""),
+		},
+		UploadProvider: UploadProvider(getEnv("UPLOAD_PROVIDER", "cloudreve")),
 	}
 
 	if cfg.Auth.JWTSecret == "change-me-in-production" && cfg.Env == "production" {

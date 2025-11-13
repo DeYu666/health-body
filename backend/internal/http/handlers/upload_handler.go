@@ -65,11 +65,11 @@ func (h *UploadHandler) UploadFile(c *gin.Context) {
 		contentType = "application/octet-stream"
 	}
 
-	// 上传到七牛云
-	log.Printf("[Upload] 开始上传到七牛云，文件大小: %d bytes", len(data))
+	// 上传文件
+	log.Printf("[Upload] 开始上传文件，文件大小: %d bytes", len(data))
 	result, err := h.uploadService.UploadFile(c.Request.Context(), data, file.Filename, contentType)
 	if err != nil {
-		log.Printf("[Upload] 七牛云上传失败: %v", err)
+		log.Printf("[Upload] 文件上传失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

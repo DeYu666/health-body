@@ -17,7 +17,7 @@ type UploadService interface {
 	UploadFile(ctx context.Context, data []byte, filename string, contentType string) (*UploadResult, error)
 }
 
-type uploadService struct {
+type qiniuUploadService struct {
 	cfg    *config.Config
 	mac    *auth.Credentials
 	bucket string
@@ -31,7 +31,20 @@ type UploadResult struct {
 	FileSize int64  `json:"fileSize"`
 }
 
+// NewUploadService 根据配置创建相应的上传服务
 func NewUploadService(cfg *config.Config) (UploadService, error) {
+	switch cfg.UploadProvider {
+	case config.UploadProviderCloudreve:
+		return NewCloudreveUploadService(cfg)
+	case config.UploadProviderQiniu:
+		fallthrough
+	default:
+		return NewQiniuUploadService(cfg)
+	}
+}
+
+// NewQiniuUploadService 创建七牛云上传服务
+func NewQiniuUploadService(cfg *config.Config) (UploadService, error) {
 	if cfg.Qiniu.AccessKey == "" || cfg.Qiniu.SecretKey == "" {
 		return nil, fmt.Errorf("七牛云配置不完整：需要 ACCESS_KEY 和 SECRET_KEY")
 	}
@@ -45,7 +58,7 @@ func NewUploadService(cfg *config.Config) (UploadService, error) {
 		domain = fmt.Sprintf("https://%s.qiniucdn.com", bucket)
 	}
 
-	return &uploadService{
+	return &qiniuUploadService{
 		cfg:    cfg,
 		mac:    mac,
 		bucket: bucket,
@@ -53,7 +66,7 @@ func NewUploadService(cfg *config.Config) (UploadService, error) {
 	}, nil
 }
 
-func (s *uploadService) UploadFile(ctx context.Context, data []byte, filename string, contentType string) (*UploadResult, error) {
+func (s *qiniuUploadService) UploadFile(ctx context.Context, data []byte, filename string, contentType string) (*UploadResult, error) {
 	// 生成唯一文件名
 	ext := filepath.Ext(filename)
 	key := fmt.Sprintf("reports/%s/%s%s", time.Now().Format("2006/01/02"), uuid.New().String(), ext)
