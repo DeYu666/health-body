@@ -20,9 +20,37 @@ type loginRequest struct {
 	Password string `json:"password" binding:"required"`
 }
 
+type registerRequest struct {
+	Email       string `json:"email" binding:"required,email"`
+	Password    string `json:"password" binding:"required,min=6"`
+	DisplayName string `json:"displayName" binding:"required"`
+}
+
 type pinLoginRequest struct {
 	Email string `json:"email" binding:"required,email"`
 	Pin   string `json:"pin" binding:"required,len=6"`
+}
+
+func (h *AuthHandler) Register(c *gin.Context) {
+	var req registerRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	token, err := h.authService.Register(c.Request.Context(), req.Email, req.Password, req.DisplayName)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if err == service.ErrUserAlreadyExists {
+			status = http.StatusConflict
+			c.JSON(status, gin.H{"error": "该邮箱已被注册"})
+			return
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, token)
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {

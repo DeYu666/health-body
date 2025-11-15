@@ -62,6 +62,14 @@ interface PaginatedReports {
     previewUrl: string
     tags: string[]
     notes: string
+    files?: Array<{
+      id: string
+      fileType: string
+      fileSizeMb: number
+      fileUrl: string
+      previewUrl?: string
+      displayOrder: number
+    }>
     createdAt: string
     updatedAt: string
   }>
@@ -136,10 +144,36 @@ class ApiClient {
       throw new Error(error.error || `请求失败: ${response.status}`)
     }
 
-    return response.json()
+    // Handle 204 No Content responses
+    if (response.status === 204 || response.statusText === 'No Content') {
+      return undefined as T
+    }
+
+    // Try to parse JSON, but handle empty responses
+    const text = await response.text()
+    if (!text) {
+      return undefined as T
+    }
+
+    try {
+      return JSON.parse(text) as T
+    } catch {
+      return undefined as T
+    }
   }
 
   // Auth APIs
+  async register(
+    email: string,
+    password: string,
+    displayName: string,
+  ): Promise<AuthToken> {
+    return this.request<AuthToken>('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ email, password, displayName }),
+    })
+  }
+
   async login(email: string, password: string): Promise<AuthToken> {
     return this.request<AuthToken>('/auth/login', {
       method: 'POST',
@@ -316,30 +350,78 @@ class ApiClient {
   ): Promise<Report> {
     console.log('[API] createReport 被调用', {
       hasFile: !!payload.file,
+      hasFiles: !!payload.files,
+      fileCount: payload.files?.length || 0,
       fileName: payload.file?.name,
       fileSize: payload.file?.size,
     })
+
+    // Determine which files to upload
+    const filesToUpload = payload.files && payload.files.length > 0 
+      ? payload.files 
+      : (payload.file ? [payload.file] : [])
 
     let fileUrl = ''
     let previewUrl = ''
     let fileType = 'pdf'
     let fileSizeMb = 0
 
-    // 如果有文件，先上传文件
-    if (payload.file) {
-      console.log('[API] 开始上传文件:', payload.file.name, payload.file.size)
-      try {
-        const uploadResult = await this.uploadFile(payload.file, onProgress)
-        console.log('[API] 文件上传成功:', uploadResult)
-        fileUrl = uploadResult.url
-        previewUrl = uploadResult.url // 七牛云返回的 URL 可以作为预览 URL
-        fileType = uploadResult.fileType
-        fileSizeMb = Number((uploadResult.fileSize / (1024 * 1024)).toFixed(2))
-      } catch (err) {
-        console.error('[API] 文件上传失败:', err)
-        throw new Error(
-          err instanceof Error ? err.message : '文件上传失败',
-        )
+    // Upload all files
+    const uploadedFiles: Array<{
+      fileType: string
+      fileSizeMb: number
+      fileUrl: string
+      previewUrl: string
+      displayOrder: number
+    }> = []
+
+    if (filesToUpload.length > 0) {
+      console.log('[API] 开始上传文件，共', filesToUpload.length, '个文件')
+      
+      // Upload all files
+      for (let i = 0; i < filesToUpload.length; i++) {
+        const file = filesToUpload[i]
+        try {
+          // Calculate progress for this file
+          const fileProgress = (progress: number) => {
+            if (onProgress) {
+              // Overall progress = (current file progress / total files) + (completed files / total files)
+              const overallProgress = Math.round(
+                ((progress / 100) / filesToUpload.length) * 100 +
+                (i / filesToUpload.length) * 100
+              )
+              onProgress(Math.min(overallProgress, 99))
+            }
+          }
+
+          const uploadResult = await this.uploadFile(file, fileProgress)
+          console.log('[API] 文件', i + 1, '上传成功:', uploadResult)
+          
+          uploadedFiles.push({
+            fileType: uploadResult.fileType,
+            fileSizeMb: Number((uploadResult.fileSize / (1024 * 1024)).toFixed(2)),
+            fileUrl: uploadResult.url,
+            previewUrl: uploadResult.url,
+            displayOrder: i,
+          })
+        } catch (err) {
+          console.error('[API] 文件', i + 1, '上传失败:', err)
+          throw new Error(
+            err instanceof Error ? err.message : `文件 ${i + 1} 上传失败`,
+          )
+        }
+      }
+
+      // Set main file info from first file (for backward compatibility)
+      if (uploadedFiles.length > 0) {
+        fileUrl = uploadedFiles[0].fileUrl
+        previewUrl = uploadedFiles[0].previewUrl
+        fileType = uploadedFiles[0].fileType
+        fileSizeMb = uploadedFiles[0].fileSizeMb
+      }
+
+      if (onProgress) {
+        onProgress(100)
       }
     } else {
       console.log('[API] 没有文件，跳过上传')
@@ -349,6 +431,70 @@ class ApiClient {
     }
 
     // 创建报告记录
+    const requestBody: any = {
+      title: payload.title,
+      hospital: payload.hospital,
+      reportDate: payload.reportDate,
+      tags: payload.tags || [],
+      notes: payload.notes || '',
+      isEncrypted: false,
+    }
+
+    // If we have files array, use it; otherwise use single file fields
+    if (uploadedFiles.length > 0) {
+      requestBody.files = uploadedFiles
+      // For backward compatibility, also set main file fields from first file
+      requestBody.fileType = uploadedFiles[0].fileType
+      requestBody.fileSizeMb = uploadedFiles[0].fileSizeMb
+      requestBody.fileUrl = uploadedFiles[0].fileUrl
+      requestBody.previewUrl = uploadedFiles[0].previewUrl
+    } else if (fileUrl) {
+      // Only set single file fields if no files array
+      requestBody.fileType = fileType
+      requestBody.fileSizeMb = fileSizeMb
+      requestBody.fileUrl = fileUrl
+      requestBody.previewUrl = previewUrl
+    }
+
+    const data = await this.request<{
+      id: string
+      title: string
+      hospital: string
+      reportDate: string
+      fileType: string
+      fileSizeMb: number
+      fileUrl: string
+      previewUrl: string
+      tags: string[]
+      notes: string
+      files?: Array<{
+        id: string
+        fileType: string
+        fileSizeMb: number
+        fileUrl: string
+        previewUrl?: string
+        displayOrder: number
+      }>
+      createdAt: string
+      updatedAt: string
+    }>('/reports', {
+      method: 'POST',
+      body: JSON.stringify(requestBody),
+    })
+
+    return this.mapReportFromApi(data)
+  }
+
+  async updateReport(
+    id: string,
+    updates: {
+      title?: string
+      hospital?: string
+      reportDate?: string
+      tags?: string[]
+      notes?: string
+    },
+  ): Promise<Report> {
     const data = await this.request<{
       id: string
       title: string
@@ -362,20 +508,9 @@ class ApiClient {
       notes: string
       createdAt: string
       updatedAt: string
-    }>('/reports', {
-      method: 'POST',
-      body: JSON.stringify({
-        title: payload.title,
-        hospital: payload.hospital,
-        reportDate: payload.reportDate,
-        fileType,
-        fileSizeMb,
-        fileUrl,
-        previewUrl,
-        tags: payload.tags || [],
-        notes: payload.notes || '',
-        isEncrypted: false,
-      }),
+    }>(`/reports/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
     })
 
     return this.mapReportFromApi(data)
@@ -385,6 +520,38 @@ class ApiClient {
     await this.request(`/reports/${id}`, {
       method: 'DELETE',
     })
+  }
+
+  async downloadReport(id: string): Promise<void> {
+    const report = await this.getReport(id)
+    // Use fileUrl if available, otherwise use previewUrl
+    const fileUrl = report.previewImageUrl || (report as any).fileUrl
+    if (fileUrl) {
+      // Create a temporary anchor element to trigger download
+      const link = document.createElement('a')
+      link.href = fileUrl
+      link.target = '_blank'
+      link.download = `${report.title || 'report'}.${report.fileType === 'pdf' ? 'pdf' : 'jpg'}`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+    } else {
+      throw new Error('报告文件不存在')
+    }
+  }
+
+  async shareReport(id: string): Promise<string> {
+    // For now, return a shareable link
+    // In the future, this could create a share token via API
+    const baseUrl = window.location.origin
+    return `${baseUrl}/share/${id}`
+  }
+
+  async listHospitals(): Promise<string[]> {
+    const response = await this.request<{ hospitals: string[] }>(
+      '/reports/hospitals',
+    )
+    return response.hospitals
   }
 
   // Metric APIs
@@ -488,7 +655,38 @@ class ApiClient {
     notes: string
     createdAt: string
     updatedAt: string
+    files?: Array<{
+      id: string
+      fileType: string
+      fileSizeMb: number
+      fileUrl: string
+      previewUrl?: string
+      displayOrder: number
+    }>
   }): Report {
+    // Convert single file to files array if files array doesn't exist
+    const files: ReportFile[] = data.files && data.files.length > 0
+      ? data.files.map((f) => ({
+          id: f.id,
+          fileType: f.fileType,
+          fileSizeMb: f.fileSizeMb,
+          fileUrl: f.fileUrl,
+          previewUrl: f.previewUrl,
+          displayOrder: f.displayOrder,
+        }))
+      : (data.fileUrl || data.previewUrl
+          ? [
+              {
+                id: data.id + '-file-0',
+                fileType: data.fileType || 'pdf',
+                fileSizeMb: data.fileSizeMb || 0,
+                fileUrl: data.fileUrl || '',
+                previewUrl: data.previewUrl || data.fileUrl || '',
+                displayOrder: 0,
+              },
+            ]
+          : [])
+
     return {
       id: data.id,
       title: data.title,
@@ -499,6 +697,7 @@ class ApiClient {
       tags: data.tags || [],
       notes: data.notes,
       previewImageUrl: data.previewUrl || data.fileUrl || '',
+      files: files.length > 0 ? files : undefined,
       createdAt: data.createdAt,
       updatedAt: data.updatedAt,
     }

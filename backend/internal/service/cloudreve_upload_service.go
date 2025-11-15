@@ -147,12 +147,21 @@ func NewCloudreveUploadService(cfg *config.Config) (UploadService, error) {
 
 // login 登录 Cloudreve 获取 token
 func (s *cloudreveUploadService) login(ctx context.Context) error {
+	// 如果配置了 email 和 password，使用它们登录
+	if s.email != "" && s.password != "" {
+		return s.performLogin(ctx)
+	}
+
+	// 如果只配置了 accessToken，直接使用（但可能已过期）
 	if s.accessToken != "" {
-		// 如果已有 token，先验证是否有效
-		// 这里简化处理，直接使用。实际应该验证 token 是否过期
 		return nil
 	}
 
+	return fmt.Errorf("无法登录：缺少 email/password 或 accessToken")
+}
+
+// performLogin 执行实际的登录操作
+func (s *cloudreveUploadService) performLogin(ctx context.Context) error {
 	loginURL := fmt.Sprintf("%s/api/v4/session/token", s.baseURL)
 
 	reqBody := map[string]string{
@@ -194,6 +203,7 @@ func (s *cloudreveUploadService) login(ctx context.Context) error {
 
 	s.accessToken = tokenResp.Data.Token.AccessToken
 	s.refreshToken = tokenResp.Data.Token.RefreshToken
+	log.Printf("[Cloudreve] 登录成功，获取到新的 access token")
 
 	return nil
 }
@@ -221,17 +231,43 @@ func (s *cloudreveUploadService) getStoragePolicies(ctx context.Context) ([]clou
 	}
 	defer resp.Body.Close()
 
-	// 如果 token 过期，尝试刷新
+	// 如果 token 过期，尝试刷新或重新登录
 	if resp.StatusCode == http.StatusUnauthorized {
-		log.Printf("[Cloudreve] 存储策略 token 过期，尝试刷新")
-		if err := s.refreshAccessToken(ctx); err == nil {
-			// 重试请求
-			req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.accessToken))
-			resp, err = s.httpClient.Do(req)
-			if err != nil {
-				return nil, fmt.Errorf("重试获取策略请求失败: %w", err)
+		log.Printf("[Cloudreve] 存储策略 token 过期，尝试刷新或重新登录")
+		// 先尝试刷新 token
+		if s.refreshToken != "" {
+			if err := s.refreshAccessToken(ctx); err == nil {
+				// 刷新成功，重新创建请求并重试
+				req, err = http.NewRequestWithContext(ctx, "GET", policiesURL, nil)
+				if err != nil {
+					return nil, fmt.Errorf("重新创建获取策略请求失败: %w", err)
+				}
+				req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.accessToken))
+				resp, err = s.httpClient.Do(req)
+				if err != nil {
+					return nil, fmt.Errorf("重试获取策略请求失败: %w", err)
+				}
+				defer resp.Body.Close()
+			} else {
+				log.Printf("[Cloudreve] 刷新 token 失败: %v，尝试重新登录", err)
 			}
-			defer resp.Body.Close()
+		}
+
+		// 如果刷新失败或没有 refreshToken，尝试重新登录
+		if resp.StatusCode == http.StatusUnauthorized && s.email != "" && s.password != "" {
+			if err := s.performLogin(ctx); err == nil {
+				// 重新登录成功，重新创建请求并重试
+				req, err = http.NewRequestWithContext(ctx, "GET", policiesURL, nil)
+				if err != nil {
+					return nil, fmt.Errorf("重新创建获取策略请求失败: %w", err)
+				}
+				req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.accessToken))
+				resp, err = s.httpClient.Do(req)
+				if err != nil {
+					return nil, fmt.Errorf("重试获取策略请求失败: %w", err)
+				}
+				defer resp.Body.Close()
+			}
 		}
 	}
 
@@ -375,16 +411,45 @@ func (s *cloudreveUploadService) createUploadSession(ctx context.Context, uri st
 	}
 	defer resp.Body.Close()
 
-	// 如果 token 过期，尝试刷新
+	// 如果 token 过期，尝试刷新或重新登录
 	if resp.StatusCode == http.StatusUnauthorized {
-		if err := s.refreshAccessToken(ctx); err == nil {
-			// 重试请求
-			req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.accessToken))
-			resp, err = s.httpClient.Do(req)
-			if err != nil {
-				return nil, fmt.Errorf("重试上传会话请求失败: %w", err)
+		log.Printf("[Cloudreve] Token 已过期，尝试刷新或重新登录")
+		// 先尝试刷新 token
+		if s.refreshToken != "" {
+			if err := s.refreshAccessToken(ctx); err == nil {
+				// 刷新成功，重新创建请求并重试
+				req, err = http.NewRequestWithContext(ctx, "PUT", uploadURL, bytes.NewBuffer(jsonData))
+				if err != nil {
+					return nil, fmt.Errorf("重新创建上传会话请求失败: %w", err)
+				}
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.accessToken))
+				resp, err = s.httpClient.Do(req)
+				if err != nil {
+					return nil, fmt.Errorf("重试上传会话请求失败: %w", err)
+				}
+				defer resp.Body.Close()
+			} else {
+				log.Printf("[Cloudreve] 刷新 token 失败: %v，尝试重新登录", err)
 			}
-			defer resp.Body.Close()
+		}
+
+		// 如果刷新失败或没有 refreshToken，尝试重新登录
+		if resp.StatusCode == http.StatusUnauthorized && s.email != "" && s.password != "" {
+			if err := s.performLogin(ctx); err == nil {
+				// 重新登录成功，重新创建请求并重试
+				req, err = http.NewRequestWithContext(ctx, "PUT", uploadURL, bytes.NewBuffer(jsonData))
+				if err != nil {
+					return nil, fmt.Errorf("重新创建上传会话请求失败: %w", err)
+				}
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.accessToken))
+				resp, err = s.httpClient.Do(req)
+				if err != nil {
+					return nil, fmt.Errorf("重试上传会话请求失败: %w", err)
+				}
+				defer resp.Body.Close()
+			}
 		}
 	}
 
@@ -430,18 +495,55 @@ func (s *cloudreveUploadService) uploadChunk(ctx context.Context, sessionID stri
 	}
 	defer resp.Body.Close()
 
-	// 如果 token 过期，尝试刷新
+	// 如果 token 过期，尝试刷新或重新登录
 	if resp.StatusCode == http.StatusUnauthorized {
-		if err := s.refreshAccessToken(ctx); err == nil {
-			// 重试请求
-			if credential == "" {
-				req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.accessToken))
+		log.Printf("[Cloudreve] 上传块 token 过期，尝试刷新或重新登录")
+		// 先尝试刷新 token
+		if s.refreshToken != "" {
+			if err := s.refreshAccessToken(ctx); err == nil {
+				// 刷新成功，重新创建请求并重试
+				req, err = http.NewRequestWithContext(ctx, "POST", uploadURL, bytes.NewReader(chunkData))
+				if err != nil {
+					return fmt.Errorf("重新创建上传块请求失败: %w", err)
+				}
+				req.Header.Set("Content-Type", "application/octet-stream")
+				req.Header.Set("Content-Length", strconv.Itoa(len(chunkData)))
+				if credential != "" {
+					req.Header.Set("Authorization", credential)
+				} else {
+					req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.accessToken))
+				}
+				resp, err = s.httpClient.Do(req)
+				if err != nil {
+					return fmt.Errorf("重试上传块请求失败: %w", err)
+				}
+				defer resp.Body.Close()
+			} else {
+				log.Printf("[Cloudreve] 刷新 token 失败: %v，尝试重新登录", err)
 			}
-			resp, err = s.httpClient.Do(req)
-			if err != nil {
-				return fmt.Errorf("重试上传块请求失败: %w", err)
+		}
+
+		// 如果刷新失败或没有 refreshToken，尝试重新登录
+		if resp.StatusCode == http.StatusUnauthorized && s.email != "" && s.password != "" {
+			if err := s.performLogin(ctx); err == nil {
+				// 重新登录成功，重新创建请求并重试
+				req, err = http.NewRequestWithContext(ctx, "POST", uploadURL, bytes.NewReader(chunkData))
+				if err != nil {
+					return fmt.Errorf("重新创建上传块请求失败: %w", err)
+				}
+				req.Header.Set("Content-Type", "application/octet-stream")
+				req.Header.Set("Content-Length", strconv.Itoa(len(chunkData)))
+				if credential != "" {
+					req.Header.Set("Authorization", credential)
+				} else {
+					req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.accessToken))
+				}
+				resp, err = s.httpClient.Do(req)
+				if err != nil {
+					return fmt.Errorf("重试上传块请求失败: %w", err)
+				}
+				defer resp.Body.Close()
 			}
-			defer resp.Body.Close()
 		}
 	}
 
@@ -499,22 +601,47 @@ func (s *cloudreveUploadService) createDirectLink(ctx context.Context, uri strin
 	}
 	defer resp.Body.Close()
 
-	// 如果 token 过期，尝试刷新
+	// 如果 token 过期，尝试刷新或重新登录
 	if resp.StatusCode == http.StatusUnauthorized {
-		if err := s.refreshAccessToken(ctx); err == nil {
-			// 重新创建请求
-			req, err = http.NewRequestWithContext(ctx, "PUT", directLinkURL, bytes.NewBuffer(jsonData))
-			if err != nil {
-				return "", fmt.Errorf("重新创建直链请求失败: %w", err)
-			}
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.accessToken))
+		log.Printf("[Cloudreve] 创建直链 token 过期，尝试刷新或重新登录")
+		// 先尝试刷新 token
+		if s.refreshToken != "" {
+			if err := s.refreshAccessToken(ctx); err == nil {
+				// 刷新成功，重新创建请求
+				req, err = http.NewRequestWithContext(ctx, "PUT", directLinkURL, bytes.NewBuffer(jsonData))
+				if err != nil {
+					return "", fmt.Errorf("重新创建直链请求失败: %w", err)
+				}
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.accessToken))
 
-			resp, err = s.httpClient.Do(req)
-			if err != nil {
-				return "", fmt.Errorf("重试直链请求失败: %w", err)
+				resp, err = s.httpClient.Do(req)
+				if err != nil {
+					return "", fmt.Errorf("重试直链请求失败: %w", err)
+				}
+				defer resp.Body.Close()
+			} else {
+				log.Printf("[Cloudreve] 刷新 token 失败: %v，尝试重新登录", err)
 			}
-			defer resp.Body.Close()
+		}
+
+		// 如果刷新失败或没有 refreshToken，尝试重新登录
+		if resp.StatusCode == http.StatusUnauthorized && s.email != "" && s.password != "" {
+			if err := s.performLogin(ctx); err == nil {
+				// 重新登录成功，重新创建请求
+				req, err = http.NewRequestWithContext(ctx, "PUT", directLinkURL, bytes.NewBuffer(jsonData))
+				if err != nil {
+					return "", fmt.Errorf("重新创建直链请求失败: %w", err)
+				}
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.accessToken))
+
+				resp, err = s.httpClient.Do(req)
+				if err != nil {
+					return "", fmt.Errorf("重试直链请求失败: %w", err)
+				}
+				defer resp.Body.Close()
+			}
 		}
 	}
 

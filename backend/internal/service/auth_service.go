@@ -16,8 +16,10 @@ import (
 
 var ErrInvalidCredentials = errors.New("invalid credentials")
 var ErrPinNotEnabled = errors.New("pin login not enabled for this account")
+var ErrUserAlreadyExists = errors.New("user already exists")
 
 type AuthService interface {
+	Register(ctx context.Context, email, password, displayName string) (*AuthToken, error)
 	Authenticate(ctx context.Context, email, password string) (*AuthToken, error)
 	VerifyPin(ctx context.Context, email, pin string) (*AuthToken, error)
 }
@@ -46,6 +48,37 @@ func NewAuthService(cfg *config.Config, userRepo repository.UserRepository) Auth
 		cfg:      cfg,
 		userRepo: userRepo,
 	}
+}
+
+func (a *authService) Register(ctx context.Context, email, password, displayName string) (*AuthToken, error) {
+	// Check if user already exists
+	existing, err := a.userRepo.FindByEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		return nil, ErrUserAlreadyExists
+	}
+
+	// Hash password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create new user
+	user := &models.User{
+		Email:        email,
+		PasswordHash: string(hashedPassword),
+		DisplayName:  displayName,
+		PinEnabled:   false,
+	}
+
+	if err := a.userRepo.Create(ctx, user); err != nil {
+		return nil, err
+	}
+
+	return a.issueToken(ctx, user)
 }
 
 func (a *authService) Authenticate(ctx context.Context, email, password string) (*AuthToken, error) {

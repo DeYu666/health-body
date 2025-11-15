@@ -1,6 +1,6 @@
 import clsx from 'classnames'
 import dayjs from 'dayjs'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useOutletContext } from 'react-router-dom'
 import {
   FaCheckCircle,
@@ -14,6 +14,7 @@ import {
 import type { ChangeEvent, FormEvent, DragEvent as ReactDragEvent } from 'react'
 import type { AppShellContextValue } from '../components/layout/AppShell'
 import { useAppState } from '../context/AppStateContext'
+import { api } from '../lib/api'
 import type { UploadPayload } from '../types'
 
 const presetTags = ['血常规', 'CT', 'B超', '心电图', 'X光', 'MRI']
@@ -28,6 +29,7 @@ export const UploadPage: React.FC = () => {
   console.log('[UploadPage] addReport 函数:', typeof addReport)
   
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [title, setTitle] = useState('2024年1月血常规检查')
   const [hospital, setHospital] = useState('北京协和医院')
   const [reportDate, setReportDate] = useState(dayjs().format('YYYY-MM-DD'))
@@ -39,6 +41,8 @@ export const UploadPage: React.FC = () => {
   const [progress, setProgress] = useState(0)
   const [status, setStatus] = useState<'idle' | 'uploading' | 'success'>('idle')
   const [error, setError] = useState<string | null>(null)
+  const [hospitals, setHospitals] = useState<string[]>([])
+  const [showHospitalDropdown, setShowHospitalDropdown] = useState(false)
 
   useEffect(() => {
     setHeaderConfig({
@@ -47,19 +51,46 @@ export const UploadPage: React.FC = () => {
     })
   }, [setHeaderConfig])
 
-  const FileIcon = useMemo(() => {
-    if (!selectedFile) return FaFileAlt
-    if (selectedFile.type.includes('pdf')) return FaFilePdf
-    if (selectedFile.type.startsWith('image/')) return FaFileImage
-    return FaFileAlt
-  }, [selectedFile])
+  useEffect(() => {
+    // Load hospitals when component mounts
+    api
+      .listHospitals()
+      .then((hospitalsList) => {
+        setHospitals(hospitalsList)
+      })
+      .catch((err) => {
+        console.error('Failed to load hospitals:', err)
+      })
+  }, [])
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (file) {
-      setSelectedFile(file)
+    const files = event.target.files
+    if (files && files.length > 0) {
+      const fileArray = Array.from(files)
+      // 追加文件而不是替换，避免重复添加相同名称和大小的文件
+      setSelectedFiles((prev) => {
+        const newFiles: File[] = []
+        const existingKeys = new Set(prev.map(f => `${f.name}-${f.size}`))
+        
+        fileArray.forEach(file => {
+          const key = `${file.name}-${file.size}`
+          if (!existingKeys.has(key)) {
+            newFiles.push(file)
+            existingKeys.add(key)
+          }
+        })
+        
+        const updated = [...prev, ...newFiles]
+        // 更新第一个文件用于向后兼容
+        if (updated.length > 0) {
+          setSelectedFile(updated[0])
+        }
+        return updated
+      })
       setProgress(0)
     }
+    // 清空 input 值，允许重复选择同一文件
+    event.target.value = ''
   }
 
   const toggleTag = (tag: string) => {
@@ -98,7 +129,8 @@ export const UploadPage: React.FC = () => {
       reportDate: dayjs(reportDate).toISOString(),
       tags,
       notes,
-      file: selectedFile,
+      file: selectedFile, // For backward compatibility
+      files: selectedFiles.length > 0 ? selectedFiles : (selectedFile ? [selectedFile] : undefined),
     }
 
     console.log('[UploadPage] 准备调用 addReport', {
@@ -132,9 +164,29 @@ export const UploadPage: React.FC = () => {
 
   const handleDrop = (event: ReactDragEvent<HTMLLabelElement>) => {
     event.preventDefault()
-    const file = event.dataTransfer.files?.[0]
-    if (file) {
-      setSelectedFile(file)
+    const files = event.dataTransfer.files
+    if (files && files.length > 0) {
+      const fileArray = Array.from(files)
+      // 追加文件而不是替换，避免重复添加相同名称和大小的文件
+      setSelectedFiles((prev) => {
+        const newFiles: File[] = []
+        const existingKeys = new Set(prev.map(f => `${f.name}-${f.size}`))
+        
+        fileArray.forEach(file => {
+          const key = `${file.name}-${file.size}`
+          if (!existingKeys.has(key)) {
+            newFiles.push(file)
+            existingKeys.add(key)
+          }
+        })
+        
+        const updated = [...prev, ...newFiles]
+        // 更新第一个文件用于向后兼容
+        if (updated.length > 0) {
+          setSelectedFile(updated[0])
+        }
+        return updated
+      })
       setProgress(0)
     }
   }
@@ -164,41 +216,54 @@ export const UploadPage: React.FC = () => {
         >
           <FaCloudUploadAlt className="text-4xl text-slate-300" />
           <div className="text-sm font-semibold text-slate-800">点击或拖拽文件到此处</div>
-          <div className="text-xs text-slate-500">支持 PDF、JPG、PNG，最大 50 MB</div>
+          <div className="text-xs text-slate-500">支持 PDF、JPG、PNG，最大 50 MB，可同时选择多个文件</div>
           <input
             id="report-file"
             type="file"
             onChange={handleFileChange}
             accept=".pdf,.jpg,.jpeg,.png"
+            multiple
             className="hidden"
           />
         </label>
 
-        {selectedFile ? (
-          <div className="mt-4 rounded-2xl bg-white p-4 shadow-card">
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                {FileIcon ? <FileIcon className="text-xl" /> : null}
-              </div>
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-slate-900">{selectedFile.name}</p>
-                <p className="text-xs text-slate-500">
-                  {dayjs().format('YYYY-MM-DD HH:mm')} ·{' '}
-                  {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB
-                </p>
-              </div>
-              <button
-                className="rounded-full bg-slate-100 p-2 text-slate-500 transition hover:bg-danger/10 hover:text-danger"
-                onClick={() => {
-                  setSelectedFile(null)
-                  setProgress(0)
-                }}
-              >
-                <FaTimes />
-              </button>
-            </div>
-
-            <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+        {(selectedFiles.length > 0 || selectedFile) ? (
+          <div className="mt-4 space-y-3">
+            {(selectedFiles.length > 0 ? selectedFiles : selectedFile ? [selectedFile] : []).map((file, index) => {
+              const FileIconForFile = file.type.includes('pdf') ? FaFilePdf : file.type.startsWith('image/') ? FaFileImage : FaFileAlt
+              return (
+                <div key={index} className="rounded-2xl bg-white p-4 shadow-card">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                      <FileIconForFile className="text-xl" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold text-slate-900">{file.name}</p>
+                      <p className="text-xs text-slate-500">
+                        {dayjs().format('YYYY-MM-DD HH:mm')} ·{' '}
+                        {(file.size / (1024 * 1024)).toFixed(2)} MB
+                      </p>
+                    </div>
+                    <button
+                      className="rounded-full bg-slate-100 p-2 text-slate-500 transition hover:bg-danger/10 hover:text-danger"
+                      onClick={() => {
+                        if (selectedFiles.length > 0) {
+                          const newFiles = selectedFiles.filter((_, i) => i !== index)
+                          setSelectedFiles(newFiles)
+                          setSelectedFile(newFiles[0] || null)
+                        } else {
+                          setSelectedFile(null)
+                        }
+                        setProgress(0)
+                      }}
+                    >
+                      <FaTimes />
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
               <div
                 className={clsx(
                   'h-full rounded-full transition-all',
@@ -207,7 +272,7 @@ export const UploadPage: React.FC = () => {
                 style={{ width: `${progress}%` }}
               />
             </div>
-            <div className="mt-2 text-xs text-slate-500">
+            <div className="text-xs text-slate-500">
               {status === 'success' ? '上传成功！数据已加密存储。' : `上传进度：${progress}%`}
             </div>
           </div>
@@ -231,12 +296,54 @@ export const UploadPage: React.FC = () => {
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
             医院/机构
           </label>
-          <input
-            value={hospital}
-            onChange={(event) => setHospital(event.target.value)}
-            placeholder="北京协和医院"
-            className="mt-2 w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
-          />
+          <div className="relative mt-2">
+            <input
+              value={hospital}
+              onChange={(event) => {
+                setHospital(event.target.value)
+                setShowHospitalDropdown(true)
+              }}
+              onFocus={() => setShowHospitalDropdown(true)}
+              onBlur={() => setTimeout(() => setShowHospitalDropdown(false), 200)}
+              placeholder="选择或输入医院/机构"
+              className="w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+            />
+            {showHospitalDropdown && hospitals.length > 0 && (
+              <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
+                {hospitals
+                  .filter((h) =>
+                    h.toLowerCase().includes(hospital.toLowerCase()),
+                  )
+                  .map((h) => (
+                    <button
+                      key={h}
+                      type="button"
+                      onClick={() => {
+                        setHospital(h)
+                        setShowHospitalDropdown(false)
+                      }}
+                      className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-primary/10"
+                    >
+                      {h}
+                    </button>
+                  ))}
+                {hospital &&
+                  !hospitals.some(
+                    (h) => h.toLowerCase() === hospital.toLowerCase(),
+                  ) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowHospitalDropdown(false)
+                      }}
+                      className="w-full px-4 py-2 text-left text-sm font-semibold text-primary hover:bg-primary/10"
+                    >
+                      使用 "{hospital}"
+                    </button>
+                  )}
+              </div>
+            )}
+          </div>
         </div>
         <div>
           <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -332,7 +439,7 @@ export const UploadPage: React.FC = () => {
           })
           
           // 直接测试
-          if (!selectedFile) {
+          if (selectedFiles.length === 0 && !selectedFile) {
             alert('请先选择文件！')
             return
           }

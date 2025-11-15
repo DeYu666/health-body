@@ -28,6 +28,7 @@ type ReportRepository interface {
 	Create(ctx context.Context, report *models.Report) error
 	FindByID(ctx context.Context, id uuid.UUID, userID uuid.UUID) (*models.Report, error)
 	List(ctx context.Context, filter ReportFilter) ([]models.Report, int64, error)
+	Update(ctx context.Context, report *models.Report) error
 	Delete(ctx context.Context, id uuid.UUID, userID uuid.UUID) error
 }
 
@@ -43,13 +44,40 @@ func (r *reportRepository) Create(ctx context.Context, report *models.Report) er
 	if len(report.Tags) == 0 {
 		report.Tags = datatypes.JSON([]byte("[]"))
 	}
-	return r.db.WithContext(ctx).Create(report).Error
+	// Use transaction to create report and files together
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Save files temporarily and clear from report to avoid GORM auto-creating them
+		files := report.Files
+		report.Files = nil
+
+		if err := tx.Create(report).Error; err != nil {
+			return err
+		}
+
+		// Create associated files if any
+		if len(files) > 0 {
+			for i := range files {
+				files[i].ReportID = report.ID
+				// Ensure ID is nil so BeforeCreate hook generates a new UUID
+				files[i].ID = uuid.Nil
+			}
+			if err := tx.Create(&files).Error; err != nil {
+				return err
+			}
+			// Restore files to report for later use
+			report.Files = files
+		}
+		return nil
+	})
 }
 
 func (r *reportRepository) FindByID(ctx context.Context, id uuid.UUID, userID uuid.UUID) (*models.Report, error) {
 	var report models.Report
 	err := r.db.WithContext(ctx).
 		Where("id = ? AND user_id = ?", id, userID).
+		Preload("Files", func(db *gorm.DB) *gorm.DB {
+			return db.Order("display_order ASC")
+		}).
 		First(&report).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
@@ -97,7 +125,11 @@ func (r *reportRepository) List(ctx context.Context, filter ReportFilter) ([]mod
 	}
 
 	var reports []models.Report
-	err := query.Order(filter.Order).
+	err := query.
+		Preload("Files", func(db *gorm.DB) *gorm.DB {
+			return db.Order("display_order ASC")
+		}).
+		Order(filter.Order).
 		Limit(filter.Limit).
 		Offset(filter.Offset).
 		Find(&reports).Error
@@ -106,6 +138,13 @@ func (r *reportRepository) List(ctx context.Context, filter ReportFilter) ([]mod
 	}
 
 	return reports, total, nil
+}
+
+func (r *reportRepository) Update(ctx context.Context, report *models.Report) error {
+	if len(report.Tags) == 0 {
+		report.Tags = datatypes.JSON([]byte("[]"))
+	}
+	return r.db.WithContext(ctx).Save(report).Error
 }
 
 func (r *reportRepository) Delete(ctx context.Context, id uuid.UUID, userID uuid.UUID) error {

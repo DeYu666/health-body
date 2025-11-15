@@ -10,6 +10,7 @@ export interface Report {
   tags: string[]
   notes?: string
   previewImageUrl: string
+  files?: ReportFile[] // Support multiple files
   createdAt: string
   updatedAt: string
 }
@@ -60,5 +61,15 @@ export interface UploadPayload {
   tags: string[]
   notes?: string
   file?: File
+  files?: File[] // Support multiple files
+}
+
+export interface ReportFile {
+  id: string
+  fileType: string
+  fileSizeMb: number
+  fileUrl: string
+  previewUrl?: string
+  displayOrder: number
 }
 

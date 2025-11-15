@@ -40,6 +40,7 @@ func NewRouter(cfg *config.Config, registry HandlerRegistry) *Router {
 
 	auth := api.Group("/auth")
 	{
+		auth.POST("/register", registry.Auth.Register)
 		auth.POST("/login", registry.Auth.Login)
 		auth.POST("/pin", registry.Auth.PinLogin)
 	}
@@ -49,8 +50,10 @@ func NewRouter(cfg *config.Config, registry HandlerRegistry) *Router {
 	reports.Use(middleware.RequireAuth())
 	{
 		reports.GET("", registry.Reports.ListReports)
+		reports.GET("/hospitals", registry.Reports.ListHospitals)
 		reports.POST("", registry.Reports.CreateReport)
 		reports.GET("/:id", registry.Reports.GetReport)
+		reports.PUT("/:id", registry.Reports.UpdateReport)
 		reports.DELETE("/:id", registry.Reports.DeleteReport)
 	}
 

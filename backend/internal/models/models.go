@@ -48,6 +48,17 @@ type Report struct {
 	Notes        string         `json:"notes" gorm:"type:text"`
 	IsEncrypted  bool           `json:"isEncrypted" gorm:"default:true"`
 	LastViewedAt *time.Time     `json:"lastViewedAt"`
+	Files        []ReportFile   `json:"files" gorm:"foreignKey:ReportID"`
+}
+
+type ReportFile struct {
+	BaseModel
+	ReportID     uuid.UUID `json:"reportId" gorm:"type:uuid;index"`
+	FileType     string    `json:"fileType" gorm:"size:24;not null"`
+	FileSizeMB   float64   `json:"fileSizeMb" gorm:"not null"`
+	FileURL      string    `json:"fileUrl" gorm:"size:512;not null"`
+	PreviewURL   string    `json:"previewUrl" gorm:"size:512"`
+	DisplayOrder int       `json:"displayOrder" gorm:"default:0"`
 }
 
 type ReportShare struct {

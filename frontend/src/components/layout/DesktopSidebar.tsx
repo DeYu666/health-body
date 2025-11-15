@@ -1,6 +1,8 @@
 import clsx from 'classnames'
+import { useNavigate } from 'react-router-dom'
 import type { IconType } from 'react-icons'
-import { FaHeartbeat } from 'react-icons/fa'
+import { FaHeartbeat, FaSignOutAlt } from 'react-icons/fa'
+import { useAuth } from '../../context/AuthContext'
 
 interface DesktopSidebarProps {
   stats: {
@@ -23,6 +25,14 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
   activePath,
   navItems,
 }) => {
+  const { logout, user } = useAuth()
+  const navigate = useNavigate()
+
+  const handleLogout = () => {
+    logout()
+    navigate('/login', { replace: true })
+  }
+
   return (
     <aside className="hidden h-full rounded-3xl bg-white/20 p-6 text-white backdrop-blur-lg md:flex md:flex-col md:shadow-card">
       <div className="mb-6 flex items-center gap-3">
@@ -101,12 +111,27 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
         </ul>
       </nav>
 
-      <div className="mt-auto rounded-2xl bg-white/10 p-4 text-sm text-white/80">
-        <p className="font-semibold text-white">隐私与安全提示</p>
-        <p className="mt-2 leading-relaxed">
-          所有报告与指标均采用端到端加密，未授权的设备无法查看。您可以在“设置”中管理 PIN
-          码或生物识别登录。
-        </p>
+      <div className="mt-auto space-y-3">
+        <div className="rounded-2xl bg-white/10 p-4 text-sm text-white/80">
+          <p className="font-semibold text-white">隐私与安全提示</p>
+          <p className="mt-2 leading-relaxed">
+            所有报告与指标均采用端到端加密，未授权的设备无法查看。您可以在"设置"中管理 PIN
+            码或生物识别登录。
+          </p>
+        </div>
+        {user && (
+          <div className="rounded-2xl bg-white/10 p-4">
+            <p className="text-xs uppercase tracking-wide text-white/70">当前用户</p>
+            <p className="mt-1 text-sm font-semibold text-white">{user.displayName || user.email}</p>
+            <button
+              onClick={handleLogout}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
+            >
+              <FaSignOutAlt />
+              登出
+            </button>
+          </div>
+        )}
       </div>
     </aside>
   )

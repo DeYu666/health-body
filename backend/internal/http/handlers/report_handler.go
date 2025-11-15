@@ -97,6 +97,36 @@ func (h *ReportHandler) CreateReport(c *gin.Context) {
 	c.JSON(http.StatusCreated, report)
 }
 
+func (h *ReportHandler) UpdateReport(c *gin.Context) {
+	userID, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	reportID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的报告 ID"})
+		return
+	}
+
+	var input service.UpdateReportInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	report, err := h.service.Update(c.Request.Context(), userID, reportID, input)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "报告不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, report)
+}
+
 func (h *ReportHandler) DeleteReport(c *gin.Context) {
 	userID, ok := requireUser(c)
 	if !ok {
@@ -118,6 +148,21 @@ func (h *ReportHandler) DeleteReport(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+func (h *ReportHandler) ListHospitals(c *gin.Context) {
+	userID, ok := requireUser(c)
+	if !ok {
+		return
+	}
+
+	hospitals, err := h.service.ListHospitals(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"hospitals": hospitals})
 }
 
 func parseIntOrDefault(value string, defaultVal int) int {

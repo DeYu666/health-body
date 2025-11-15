@@ -5,6 +5,7 @@ interface AuthContextValue {
   isAuthenticated: boolean
   isPinEnabled: boolean
   user: AuthToken['user'] | null
+  register: (email: string, password: string, displayName: string) => Promise<void>
   login: (email: string, password: string) => Promise<void>
   logout: () => void
   verifyPin: (email: string, pin: string) => Promise<boolean>
@@ -54,6 +55,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
   }, [isAuthenticated, user])
+
+  const register = async (email: string, password: string, displayName: string) => {
+    if (!email || !password || !displayName) {
+      throw new Error('请填写所有必填项')
+    }
+
+    try {
+      const token = await api.register(email, password, displayName)
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(AUTH_TOKEN_KEY, token.accessToken)
+      }
+      setUser(token.user)
+      setIsAuthenticated(true)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '注册失败'
+      throw new Error(message)
+    }
+  }
 
   const login = async (email: string, password: string) => {
     if (!email || !password) {
@@ -105,6 +124,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     isAuthenticated,
     isPinEnabled,
     user,
+    register,
     login,
     logout,
     verifyPin,

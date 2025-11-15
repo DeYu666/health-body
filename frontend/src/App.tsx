@@ -9,6 +9,7 @@ import { LoginPage } from './pages/LoginPage'
 import { MetricEntryPage } from './pages/MetricEntryPage'
 import { MetricTrendPage } from './pages/MetricTrendPage'
 import { PinPage } from './pages/PinPage'
+import { RegisterPage } from './pages/RegisterPage'
 import { ReportDetailPage } from './pages/ReportDetailPage'
 import { UploadPage } from './pages/UploadPage'
 
@@ -18,6 +19,7 @@ const AppRoutes = () => {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
       <Route path="/pin" element={<PinPage />} />
 
       <Route element={<ProtectedRoute />}>

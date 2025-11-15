@@ -44,20 +44,46 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       setLoading(true)
       setError(null)
       const response = await api.listReports({ limit: 100 })
-      // Convert API response to frontend Report type
-      const reports: Report[] = response.items.map((item) => ({
-        id: item.id,
-        title: item.title,
-        hospital: item.hospital,
-        reportDate: item.reportDate,
-        fileSizeMb: item.fileSizeMb,
-        fileType: (item.fileType as Report['fileType']) || 'pdf',
-        tags: item.tags || [],
-        notes: item.notes,
-        previewImageUrl: item.previewUrl || item.fileUrl || '',
-        createdAt: item.createdAt,
-        updatedAt: item.updatedAt,
-      }))
+      // Convert API response to frontend Report type using mapReportFromApi logic
+      const reports: Report[] = response.items.map((item) => {
+        // Convert single file to files array if files array doesn't exist
+        const files: Report['files'] = item.files && item.files.length > 0
+          ? item.files.map((f: any) => ({
+              id: f.id,
+              fileType: f.fileType,
+              fileSizeMb: f.fileSizeMb,
+              fileUrl: f.fileUrl,
+              previewUrl: f.previewUrl,
+              displayOrder: f.displayOrder,
+            }))
+          : (item.fileUrl || item.previewUrl
+              ? [
+                  {
+                    id: item.id + '-file-0',
+                    fileType: item.fileType || 'pdf',
+                    fileSizeMb: item.fileSizeMb || 0,
+                    fileUrl: item.fileUrl || '',
+                    previewUrl: item.previewUrl || item.fileUrl || '',
+                    displayOrder: 0,
+                  },
+                ]
+              : undefined)
+
+        return {
+          id: item.id,
+          title: item.title,
+          hospital: item.hospital,
+          reportDate: item.reportDate,
+          fileSizeMb: item.fileSizeMb,
+          fileType: (item.fileType as Report['fileType']) || 'pdf',
+          tags: item.tags || [],
+          notes: item.notes,
+          previewImageUrl: item.previewUrl || item.fileUrl || '',
+          files: files,
+          createdAt: item.createdAt,
+          updatedAt: item.updatedAt,
+        }
+      })
       setReports(reports)
     } catch (err) {
       const message = err instanceof Error ? err.message : '加载报告失败'

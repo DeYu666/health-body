@@ -4,6 +4,7 @@ import { FaCalendarAlt, FaDownload, FaFileAlt, FaFilePdf, FaHospital, FaLink, Fa
 import { useNavigate, useOutletContext, useParams } from 'react-router-dom'
 import type { AppShellContextValue } from '../components/layout/AppShell'
 import { useAppState } from '../context/AppStateContext'
+import { api } from '../lib/api'
 
 export const ReportDetailPage: React.FC = () => {
   const { reportId } = useParams<{ reportId: string }>()
@@ -53,15 +54,22 @@ export const ReportDetailPage: React.FC = () => {
     }
   }
 
-  const handleDownload = () => {
-    alert('已触发下载请求（演示模式）')
+  const handleDownload = async () => {
+    try {
+      await api.downloadReport(report.id)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '下载失败，请稍后重试')
+    }
   }
 
-  const handleShare = () => {
-    navigator.clipboard
-      .writeText(`https://phr.app/share/${report.id}`)
-      .then(() => alert('分享链接已复制到剪贴板'))
-      .catch(() => alert('无法复制分享链接，请稍后重试'))
+  const handleShare = async () => {
+    try {
+      const shareUrl = await api.shareReport(report.id)
+      await navigator.clipboard.writeText(shareUrl)
+      alert('分享链接已复制到剪贴板')
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '无法复制分享链接，请稍后重试')
+    }
   }
 
   const PreviewIcon = report.fileType === 'pdf' ? FaFilePdf : FaFileAlt
@@ -104,20 +112,90 @@ export const ReportDetailPage: React.FC = () => {
       </section>
 
       <section className="space-y-4 rounded-2xl bg-slate-50 p-4">
-        <h2 className="text-sm font-semibold text-slate-600">报告预览</h2>
-        <div className="overflow-hidden rounded-2xl bg-white shadow-card">
-          <img
-            src={report.previewImageUrl}
-            alt={`${report.title} 预览`}
-            className="h-72 w-full object-cover"
-          />
-          <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
-            <span>在线预览仅供参考，原始文件保存在云端。</span>
-            <button className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-200">
-              放大查看
-            </button>
+        <h2 className="text-sm font-semibold text-slate-600">
+          报告预览 {report.files && report.files.length > 1 ? `(${report.files.length} 个文件)` : ''}
+        </h2>
+        {report.files && report.files.length > 0 ? (
+          <div className="space-y-3">
+            {report.files.map((file, index) => {
+              const FileIconForFile = file.fileType === 'pdf' || file.fileType?.includes('pdf') ? FaFilePdf : FaFileAlt
+              return (
+                <div key={file.id || index} className="overflow-hidden rounded-2xl bg-white shadow-card">
+                  {file.previewUrl || file.fileUrl ? (
+                    file.fileType === 'pdf' || file.fileType?.includes('pdf') ? (
+                      <div className="flex h-72 items-center justify-center bg-slate-100">
+                        <div className="text-center">
+                          <FaFilePdf className="mx-auto text-6xl text-red-500" />
+                          <p className="mt-4 text-sm font-semibold text-slate-700">PDF 文档</p>
+                          <p className="mt-1 text-xs text-slate-500">{file.fileSizeMb.toFixed(1)} MB</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <img
+                        src={file.previewUrl || file.fileUrl}
+                        alt={`${report.title} 预览 ${index + 1}`}
+                        className="h-72 w-full object-cover"
+                        onError={(e) => {
+                          // Fallback to icon if image fails to load
+                          const target = e.target as HTMLImageElement
+                          target.style.display = 'none'
+                          const parent = target.parentElement
+                          if (parent) {
+                            parent.innerHTML = `
+                              <div class="flex h-72 items-center justify-center bg-slate-100">
+                                <div class="text-center">
+                                  <svg class="mx-auto h-16 w-16 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
+                                  </svg>
+                                  <p class="mt-2 text-sm font-semibold text-slate-700">文件预览</p>
+                                </div>
+                              </div>
+                            `
+                          }
+                        }}
+                      />
+                    )
+                  ) : (
+                    <div className="flex h-72 items-center justify-center bg-slate-100">
+                      <FileIconForFile className="text-4xl text-slate-400" />
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
+                    <span>
+                      {report.files && report.files.length > 1 ? `文件 ${index + 1} · ` : ''}
+                      {file.fileSizeMb.toFixed(1)} MB · {file.fileType || '未知类型'}
+                    </span>
+                    <button
+                      onClick={() => {
+                        const url = file.fileUrl || file.previewUrl
+                        if (url) {
+                          window.open(url, '_blank')
+                        }
+                      }}
+                      className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-200"
+                    >
+                      查看
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
           </div>
-        </div>
+        ) : (
+          <div className="overflow-hidden rounded-2xl bg-white shadow-card">
+            <img
+              src={report.previewImageUrl}
+              alt={`${report.title} 预览`}
+              className="h-72 w-full object-cover"
+            />
+            <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
+              <span>在线预览仅供参考，原始文件保存在云端。</span>
+              <button className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-200">
+                放大查看
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="grid grid-cols-2 gap-3">
