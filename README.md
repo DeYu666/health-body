@@ -15,10 +15,12 @@ This repository hosts a mobile-first personal health record (PHR) web applicatio
 ## Project Structure
 
 ```
-frontend/   # Vite + React + Tailwind UI with mock data and routing
-backend/    # Go + Gin REST API, PostgreSQL persistence, demo seed data
-migrations/ # SQL schema (optional – gorm AutoMigrate also enabled)
-docker-compose.yml
+frontend/              # Vite + React + Tailwind UI with backend API integration
+backend/               # Go + Gin REST API, PostgreSQL persistence, demo seed data
+  ├── cmd/server/      # Application entry point
+  ├── internal/        # Internal packages (config, database, handlers, models, repository, service)
+  └── migrations/      # SQL migration scripts (001_init.sql, 002_add_report_files.sql, 003_add_user_tags.sql)
+docker-compose.yml     # Docker Compose configuration for backend and PostgreSQL
 ```
 
 ---
@@ -38,6 +40,8 @@ npm run dev                     # starts on http://localhost:5173
 - Charts are powered by `react-chartjs-2` with time-series adapters.
 - Mobile layout is the primary experience; desktop adds an enhanced sidebar.
 - Demo credentials: `demo@example.com / demo1234` or PIN `123456`.
+- **多文件上传**：支持一个报告上传多个文件，并显示上传进度。
+- **报告编辑**：支持修改报告的标题、医院、日期、标签和备注。
 
 ### Available Scripts
 
@@ -64,9 +68,10 @@ cp .env.example .env
 go run ./cmd/server
 ```
 
-- Auto-migrates schema on start.
+- Auto-migrates schema on start (使用 GORM AutoMigrate).
 - Seeds a demo user (`demo@example.com / demo1234`, PIN `123456`) matching the UI.
-- Accepts `X-User-ID` header for multi-user testing; defaults to demo user if omitted.
+- JWT 认证：使用 JWT token 进行身份验证，支持 Bearer token 和 `X-User-ID` header。
+- 文件上传：集成七牛云存储，支持上传到 Qiniu Cloud。
 
 ### Docker Compose (backend + database)
 
@@ -83,19 +88,22 @@ Services:
 
 ### REST Endpoints
 
-| Method & Path                | Description                                   |
-|-----------------------------|-----------------------------------------------|
-| `POST /api/v1/auth/login`   | Email + password login                        |
-| `POST /api/v1/auth/pin`     | PIN-based login                               |
-| `GET  /api/v1/reports`      | List reports (supports search, tag, hospital) |
-| `POST /api/v1/reports`      | Create a report metadata record               |
-| `GET  /api/v1/reports/:id`  | Fetch single report                           |
-| `DELETE /api/v1/reports/:id`| Delete report                                 |
-| `GET  /api/v1/metrics`      | List metric entries (filterable)              |
-| `POST /api/v1/metrics`      | Record a new metric value                     |
-| `GET  /api/v1/metrics/trend`| Aggregate summary + time-series               |
-| `POST /api/v1/upload/file` | Upload file to Qiniu Cloud storage           |
-| `GET  /healthz`             | Liveness probe                                |
+| Method & Path                    | Description                                   |
+|----------------------------------|-----------------------------------------------|
+| `POST /api/v1/auth/register`    | User registration                             |
+| `POST /api/v1/auth/login`        | Email + password login                        |
+| `POST /api/v1/auth/pin`          | PIN-based login                               |
+| `GET  /api/v1/reports`           | List reports (supports search, tag, hospital) |
+| `GET  /api/v1/reports/hospitals` | List all hospitals used by user               |
+| `POST /api/v1/reports`           | Create a report metadata record               |
+| `GET  /api/v1/reports/:id`       | Fetch single report                           |
+| `PUT  /api/v1/reports/:id`       | Update report metadata                        |
+| `DELETE /api/v1/reports/:id`     | Delete report                                 |
+| `GET  /api/v1/metrics`           | List metric entries (filterable)              |
+| `POST /api/v1/metrics`           | Record a new metric value                     |
+| `GET  /api/v1/metrics/trend`     | Aggregate summary + time-series               |
+| `POST /api/v1/upload/file`       | Upload file to Qiniu Cloud storage           |
+| `GET  /healthz`                  | Liveness probe                                |
 
 > **Note**: File storage is integrated with **Qiniu Cloud**. Configure `QINIU_ACCESS_KEY` and `QINIU_SECRET_KEY` in environment variables.
 
@@ -149,10 +157,12 @@ go build ./...
 
 ## Next Steps & Extensions
 
-- Connect real file storage (S3, GCS) and generate signed URLs for report assets.
-- Replace mock context data with live API integration on the React side.
-- Add JWT auth middleware and refresh token persistence.
-- Expand automated tests (component tests, API contract tests).
+- ✅ File storage integration with Qiniu Cloud - 已完成
+- ✅ JWT auth middleware - 已实现
+- ⏳ User-level tag management API - 迁移脚本已准备，待实现后端 API
+- ⏳ Refresh token persistence - 待实现
+- ⏳ Expand automated tests (component tests, API contract tests) - 待实现
+- ⏳ Report sharing with password protection - 数据库模型已准备，待实现 API
 
 ---
 
@@ -167,9 +177,9 @@ This project is provided as-is for implementation reference. Update licensing te
 - ✅ 删除报告功能异常 - 已修复
 - ✅ 下载 和 分享功能异常 - 已实现
 - ✅ 报告预览功能异常 - 已修复
-- ⏳ 一个档案中当前只允许上传一个报告，之后需要支持上传多个报告 - 需要数据库迁移
+- ✅ 一个档案中当前只允许上传一个报告，之后需要支持上传多个报告 - 已完成（数据库模型和前端已支持，迁移脚本已准备）
 - ✅ 档案要支持修改，当前没有支持修改功能 - 已完成
-- ⏳ 自定义后的标签也要能在其他档案中查看选择 - 需要数据库迁移
+- ⏳ 自定义后的标签也要能在其他档案中查看选择 - 迁移脚本已准备，后端 API 待实现
 - ✅ （点击或拖拽文件到此处后）当前是显示上传进度0，之后需要支持实时上传，通过显示上传进度和上传文件的预览 - 已实现
 - ✅ 医院/机构的信息在当前支持填写的基础上建议再支持下拉框选择，选择的医院就是其他档案中已经填写的医院/机构 - 已完成
 
@@ -201,40 +211,41 @@ This project is provided as-is for implementation reference. Update licensing te
    - 后端：添加了 `GET /api/v1/reports/hospitals` 端点
    - 前端：医院输入框支持下拉选择已有医院或输入新医院
 
-## 需要数据库迁移的功能
+## 数据库迁移
 
-以下功能需要修改数据库结构，并提供数据迁移脚本：
+项目包含以下数据库迁移脚本：
 
-1. **支持一个档案上传多个报告文件**
-   - 需要创建 `report_files` 表
-   - 将文件信息从 `reports` 表分离出来
-   - 迁移脚本：`backend/migrations/002_add_report_files.sql`
-   - **数据迁移**：自动将现有报告的文件信息迁移到新表
-
-2. **用户级别的标签管理**
-   - 需要创建 `user_tags` 表
-   - 将标签从报告级别提升到用户级别
-   - 迁移脚本：`backend/migrations/003_add_user_tags.sql`
-   - **数据迁移**：自动从现有报告的 tags JSONB 字段提取所有标签并创建用户级别标签
+1. **`001_init.sql`** - 初始化数据库表结构（users, reports, metric_entries）
+2. **`002_add_report_files.sql`** - 添加多文件支持
+   - 创建 `report_files` 表
+   - 自动将现有报告的文件信息迁移到新表
+   - **状态**：数据库模型已实现，前端已支持多文件上传和展示
+3. **`003_add_user_tags.sql`** - 用户级别标签管理
+   - 创建 `user_tags` 表
+   - 自动从现有报告的 tags 字段提取所有标签并创建用户级别标签
+   - **状态**：迁移脚本已准备，后端 API 待实现
 
 ### 运行数据库迁移
 
-迁移脚本已经创建，可以在 PostgreSQL 中手动执行，或者集成到应用的启动流程中：
+迁移脚本可以在 PostgreSQL 中手动执行：
 
 ```bash
 # 连接到数据库
 psql -U postgres -d your_database_name
 
 # 执行迁移脚本
+\i backend/migrations/001_init.sql
 \i backend/migrations/002_add_report_files.sql
 \i backend/migrations/003_add_user_tags.sql
 ```
 
 或者使用 Go 的数据库迁移工具（如 golang-migrate）来管理这些迁移。
 
-**注意**：迁移脚本已经考虑了现有数据的迁移，会：
-- 将现有报告的文件信息复制到 `report_files` 表
-- 从现有报告的 tags 字段提取所有标签并创建用户级别的标签记录
+**注意**：
+- 迁移脚本已经考虑了现有数据的迁移
+- `002_add_report_files.sql` 会将现有报告的文件信息复制到 `report_files` 表
+- `003_add_user_tags.sql` 会从现有报告的 tags 字段提取所有标签并创建用户级别的标签记录
+- 当前后端使用 GORM AutoMigrate，会自动创建表结构，但不会执行数据迁移逻辑
 
 ## 已修复的问题
 
@@ -247,6 +258,8 @@ psql -U postgres -d your_database_name
    - 修复：改进了 `downloadReport` 方法，使用正确的文件 URL 并创建下载链接
 
 3. ✅ **多文件上传和展示** - 已实现
+   - 后端：`ReportFile` 模型已实现，支持一个报告关联多个文件
+   - 后端：报告创建和查询 API 已支持多文件
    - 前端：支持选择多个文件上传
-   - 前端：支持在报告详情页面显示多个文件（如果存在）
-   - 注意：后端完整的多文件支持需要运行数据库迁移脚本 `002_add_report_files.sql` 并实现相应的后端 API
+   - 前端：支持在报告详情页面显示多个文件
+   - 注意：如需迁移现有数据，请运行迁移脚本 `002_add_report_files.sql`
