@@ -11,6 +11,7 @@ import (
 
 type MetricService interface {
 	Create(ctx context.Context, userID uuid.UUID, input CreateMetricInput) (*MetricDTO, error)
+	DeleteDocumentLinked(ctx context.Context, userID uuid.UUID, documentID uuid.UUID) error
 	List(ctx context.Context, filter repository.MetricFilter) ([]MetricDTO, error)
 	TrendSummary(ctx context.Context, userID uuid.UUID, metricType string, start, end time.Time) (*MetricTrendSummary, error)
 }
@@ -82,6 +83,10 @@ func (m *metricService) Create(ctx context.Context, userID uuid.UUID, input Crea
 		Notes:          entry.Notes,
 		CreatedAt:      entry.CreatedAt,
 	}, nil
+}
+
+func (m *metricService) DeleteDocumentLinked(ctx context.Context, userID uuid.UUID, documentID uuid.UUID) error {
+	return m.repo.DeleteBySourceDocument(ctx, userID, documentID)
 }
 
 func (m *metricService) List(ctx context.Context, filter repository.MetricFilter) ([]MetricDTO, error) {

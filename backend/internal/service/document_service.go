@@ -474,44 +474,19 @@ func (s *documentService) syncMetricsFromDocument(ctx context.Context, userID uu
 	if s.metricService == nil {
 		return 0, nil
 	}
+	if err := s.metricService.DeleteDocumentLinked(ctx, userID, document.ID); err != nil {
+		return 0, err
+	}
 	metrics := extractMetricInputsFromText(sourceText, observedAt, document.Title, document.ID)
 	metrics = append(metrics, metricInputsFromObservations(observations, observedAt, document.Title, document.ID)...)
 	added := 0
 	for _, metric := range metrics {
-		exists, err := s.metricAlreadyLinked(ctx, userID, metric, document.ID)
-		if err != nil {
-			return added, err
-		}
-		if exists {
-			continue
-		}
 		if _, err := s.metricService.Create(ctx, userID, metric); err != nil {
 			return added, err
 		}
 		added++
 	}
 	return added, nil
-}
-
-func (s *documentService) metricAlreadyLinked(ctx context.Context, userID uuid.UUID, metric CreateMetricInput, documentID uuid.UUID) (bool, error) {
-	start := metric.RecordedAt.Add(-time.Second)
-	end := metric.RecordedAt.Add(time.Second)
-	existing, err := s.metricService.List(ctx, repository.MetricFilter{
-		UserID:     userID,
-		MetricType: metric.MetricType,
-		StartDate:  &start,
-		EndDate:    &end,
-		Limit:      100,
-	})
-	if err != nil {
-		return false, err
-	}
-	for _, entry := range existing {
-		if strings.Contains(entry.Notes, documentID.String()) {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 func latestOCRRawText(document *models.HealthDocument) string {
@@ -892,12 +867,12 @@ var labObservationRules = []labObservationRule{
 		Unit:           "U/L",
 		MetricType:     "lab:creatine-kinase",
 		ReferenceText:  "成人常见参考范围约 24-174 U/L，不同医院可能不同",
-		ValidateMin:    1,
+		ValidateMin:    20,
 		ValidateMax:    20000,
 		ReferenceLow:   floatPtr(24),
 		ReferenceHigh:  floatPtr(174),
 		Patterns: []*regexp.Regexp{
-			regexp.MustCompile(`(?i)肌酸激酶[^0-9]{0,24}(?:大于|人于|>|＞)?\s*(\d{1,5}(?:\.\d+)?)\s*(?:U\s*[/／]?\s*[Ll1I])?`),
+			regexp.MustCompile(`(?i)肌酸激酶[^0-9]{0,24}(?:大于|人于|>|＞)?\s*(\d{1,5}(?:\.\d+)?)\s*U\s*[/／]?\s*[Ll1I]`),
 		},
 	},
 	{
@@ -957,7 +932,7 @@ var labObservationRules = []labObservationRule{
 		ReferenceLow:   floatPtr(0),
 		ReferenceHigh:  floatPtr(0.041),
 		Patterns: []*regexp.Regexp{
-			regexp.MustCompile(`(?i)(?:肌钙蛋白(?:[（(]?\s*TNI\s*[）)]?)?|TNI)[^0-9]{0,24}(?:结果为|结果)?\s*(\d(?:\.\d+)?)\s*ng\s*[/／]?\s*m[lL]`),
+			regexp.MustCompile(`(?i)(?:肌钙蛋白(?:[（(]?\s*TNI\s*[）)]?)?|TNI)[^0-9]{0,24}(?:结果为|结果)\s*(\d(?:\.\d+)?)\s*ng\s*[/／]?\s*m[lL]`),
 		},
 	},
 	{

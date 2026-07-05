@@ -20,6 +20,7 @@ type MetricFilter struct {
 
 type MetricRepository interface {
 	Create(ctx context.Context, entry *models.MetricEntry) error
+	DeleteBySourceDocument(ctx context.Context, userID uuid.UUID, documentID uuid.UUID) error
 	List(ctx context.Context, filter MetricFilter) ([]models.MetricEntry, error)
 	Latest(ctx context.Context, userID uuid.UUID, metricType string) (*models.MetricEntry, error)
 	Aggregate(ctx context.Context, userID uuid.UUID, metricType string, start, end time.Time) (float64, float64, float64, error)
@@ -35,6 +36,12 @@ func NewMetricRepository(db *gorm.DB) MetricRepository {
 
 func (m *metricRepository) Create(ctx context.Context, entry *models.MetricEntry) error {
 	return m.db.WithContext(ctx).Create(entry).Error
+}
+
+func (m *metricRepository) DeleteBySourceDocument(ctx context.Context, userID uuid.UUID, documentID uuid.UUID) error {
+	return m.db.WithContext(ctx).
+		Where("user_id = ? AND notes LIKE ?", userID, "%#"+documentID.String()+"%").
+		Delete(&models.MetricEntry{}).Error
 }
 
 func (m *metricRepository) List(ctx context.Context, filter MetricFilter) ([]models.MetricEntry, error) {
