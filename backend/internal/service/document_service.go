@@ -28,18 +28,18 @@ type documentService struct {
 	repo          repository.DocumentRepository
 	reportService ReportService
 	aiAnalyzer    AIAnalyzer
-	ocrProvider   string
+	ocrProcessor  OCRProcessor
 }
 
-func NewDocumentService(repo repository.DocumentRepository, reportService ReportService, aiAnalyzer AIAnalyzer, ocrProvider string) DocumentService {
-	if strings.TrimSpace(ocrProvider) == "" {
-		ocrProvider = "none"
+func NewDocumentService(repo repository.DocumentRepository, reportService ReportService, aiAnalyzer AIAnalyzer, ocrProcessor OCRProcessor) DocumentService {
+	if ocrProcessor == nil {
+		ocrProcessor = &noopOCRProcessor{provider: "none"}
 	}
 	return &documentService{
 		repo:          repo,
 		reportService: reportService,
 		aiAnalyzer:    aiAnalyzer,
-		ocrProvider:   ocrProvider,
+		ocrProcessor:  ocrProcessor,
 	}
 }
 
@@ -140,17 +140,18 @@ func (s *documentService) Import(ctx context.Context, userID uuid.UUID, input Im
 	}
 
 	categoryHint := normalizeDocumentCategory(input.Category, "其他")
-	rawText := strings.TrimSpace(input.Note)
+	ocrExtraction := s.ocrProcessor.ExtractFiles(ctx, input.Files)
+	ocrRawText := strings.TrimSpace(ocrExtraction.RawText)
 	analysis, analysisErr := s.aiAnalyzer.AnalyzeDocument(ctx, AIAnalyzeDocumentInput{
 		Title:     title,
 		Category:  input.Category,
 		Note:      input.Note,
-		OCRText:   rawText,
+		OCRText:   ocrRawText,
 		FileCount: len(input.Files),
 	})
 
 	category := categoryHint
-	summary := buildFallbackSummary(input, title)
+	summary := buildFallbackSummary(input, title, ocrExtraction)
 	conclusion := "资料已保存，等待 OCR/AI 完整处理。"
 	confidence := 0.35
 	status := "needs_review"
@@ -167,7 +168,7 @@ func (s *documentService) Import(ctx context.Context, userID uuid.UUID, input Im
 		}
 		confidence = analysis.Confidence
 		modelName = s.aiAnalyzer.ModelName()
-		if rawText != "" && confidence >= 0.6 {
+		if confidence >= 0.6 && (len(input.Files) == 0 || ocrRawText != "") {
 			status = "ready"
 		}
 	}
@@ -175,7 +176,9 @@ func (s *documentService) Import(ctx context.Context, userID uuid.UUID, input Im
 	metadata := map[string]any{
 		"source":       "documents_import",
 		"fileCount":    len(input.Files),
-		"ocrProvider":  s.ocrProvider,
+		"ocrProvider":  s.ocrProcessor.ProviderName(),
+		"ocrTextLen":   len([]rune(ocrRawText)),
+		"ocrErrors":    ocrExtraction.ErrorNotes,
 		"hasAIResult":  analysisErr == nil,
 		"analysisNote": analysisErrorNote(analysisErr),
 	}
@@ -220,12 +223,12 @@ func (s *documentService) Import(ctx context.Context, userID uuid.UUID, input Im
 	}
 
 	ocrResults := []models.OCRResult{{
-		Provider:      s.ocrProvider,
-		RawText:       rawText,
-		PagesJSON:     datatypes.JSON([]byte("[]")),
-		TablesJSON:    datatypes.JSON([]byte("[]")),
-		KeyValuesJSON: datatypes.JSON([]byte("{}")),
-		Confidence:    nil,
+		Provider:      s.ocrProcessor.ProviderName(),
+		RawText:       firstNonEmpty(ocrRawText, noteOnlyRawText(input)),
+		PagesJSON:     ocrExtraction.PagesJSON,
+		TablesJSON:    ocrExtraction.TablesJSON,
+		KeyValuesJSON: ocrExtraction.KeyValuesJSON,
+		Confidence:    ocrExtraction.Confidence,
 	}}
 
 	analyses := []models.AIAnalysis{{
@@ -239,7 +242,7 @@ func (s *documentService) Import(ctx context.Context, userID uuid.UUID, input Im
 		Confidence:          &confidence,
 	}}
 
-	reviewTasks := buildReviewTasks(userID, status, input, category, analysisErr)
+	reviewTasks := buildReviewTasks(userID, status, input, category, analysisErr, ocrExtraction)
 	if err := s.repo.CreateWithArtifacts(ctx, document, documentFiles, ocrResults, analyses, reviewTasks); err != nil {
 		return nil, err
 	}
@@ -391,10 +394,15 @@ func buildDocumentTitle(input ImportDocumentInput, documentDate time.Time) strin
 	return "待识别健康资料 · " + documentDate.Format("2006-01-02")
 }
 
-func buildFallbackSummary(input ImportDocumentInput, title string) string {
+func buildFallbackSummary(input ImportDocumentInput, title string, ocrExtraction OCRExtraction) string {
 	parts := []string{"已导入：" + title}
 	if len(input.Files) > 0 {
 		parts = append(parts, "包含文件数："+strconvItoa(len(input.Files)))
+		if strings.TrimSpace(ocrExtraction.RawText) != "" {
+			parts = append(parts, "OCR 已识别文字")
+		} else {
+			parts = append(parts, "OCR 等待处理")
+		}
 	}
 	if note := strings.TrimSpace(input.Note); note != "" {
 		parts = append(parts, "用户补充："+truncateText(note, 300))
@@ -414,7 +422,7 @@ func buildLegacyReportNotes(document *models.HealthDocument, input ImportDocumen
 	return strings.Join(parts, "\n")
 }
 
-func buildReviewTasks(userID uuid.UUID, status string, input ImportDocumentInput, category string, analysisErr error) []models.ReviewTask {
+func buildReviewTasks(userID uuid.UUID, status string, input ImportDocumentInput, category string, analysisErr error, ocrExtraction OCRExtraction) []models.ReviewTask {
 	if status == "ready" {
 		return nil
 	}
@@ -427,12 +435,13 @@ func buildReviewTasks(userID uuid.UUID, status string, input ImportDocumentInput
 		Status:         "open",
 	}}
 
-	if len(input.Files) > 0 {
+	if len(input.Files) > 0 && (strings.TrimSpace(ocrExtraction.RawText) == "" || len(ocrExtraction.ErrorNotes) > 0) {
 		tasks = append(tasks, models.ReviewTask{
-			UserID:    userID,
-			TaskType:  "run_ocr",
-			FieldName: "ocr_text",
-			Status:    "open",
+			UserID:         userID,
+			TaskType:       "run_ocr",
+			FieldName:      "ocr_text",
+			SuggestedValue: strings.Join(ocrExtraction.ErrorNotes, ","),
+			Status:         "open",
 		})
 	}
 	if analysisErr != nil {
@@ -548,6 +557,13 @@ func analysisErrorNote(err error) string {
 		return "ai_unavailable"
 	}
 	return "ai_error"
+}
+
+func noteOnlyRawText(input ImportDocumentInput) string {
+	if len(input.Files) == 0 {
+		return strings.TrimSpace(input.Note)
+	}
+	return ""
 }
 
 func strconvItoa(value int) string {

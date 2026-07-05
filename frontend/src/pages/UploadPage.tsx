@@ -323,8 +323,14 @@ export const UploadPage: React.FC = () => {
         <div className="mt-4 space-y-3">
           {pipelineSteps.map((step, index) => {
             const isActive =
-              status === 'success' || (status === 'uploading' && index === 0)
-            const isPending = status === 'idle' || (status === 'uploading' && index > 0)
+              status === 'success' || (status === 'uploading' && index <= 2)
+            const isPending = status === 'idle'
+            const statusText =
+              status === 'success'
+                ? '完成'
+                : status === 'uploading'
+                  ? '处理中'
+                  : '就绪'
             return (
               <div key={step.label} className="flex items-center gap-3">
                 <div
@@ -346,7 +352,7 @@ export const UploadPage: React.FC = () => {
                 {index > 0 ? (
                   <span className="flex items-center gap-1 text-xs text-slate-400">
                     <FaRegClock />
-                    待接入
+                    {statusText}
                   </span>
                 ) : null}
               </div>
@@ -367,8 +373,8 @@ export const UploadPage: React.FC = () => {
             </div>
             <p className="mt-2 text-xs text-slate-500">
               {status === 'success'
-                ? '资料已导入，已进入待 AI 处理队列。'
-                : `正在保存原始资料：${progress}%`}
+                ? '资料已导入，OCR 与 AI 整理结果已写入档案。'
+                : `正在保存并识别资料：${progress}%`}
             </p>
           </div>
         ) : null}

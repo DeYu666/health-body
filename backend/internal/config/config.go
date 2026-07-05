@@ -54,7 +54,10 @@ type AIConfig struct {
 }
 
 type OCRConfig struct {
-	Provider string
+	Provider     string
+	Endpoint     string
+	Timeout      time.Duration
+	MaxFileBytes int64
 }
 
 type UploadProvider string
@@ -122,7 +125,10 @@ func Load() *Config {
 			SenseNovaSmartModel: getEnv("SENSENOVA_SMART_MODEL", getEnv("SENSENOVA_TEXT_MODEL", "deepseek-v4-flash")),
 		},
 		OCR: OCRConfig{
-			Provider: getEnv("OCR_PROVIDER", "none"),
+			Provider:     getEnv("OCR_PROVIDER", "none"),
+			Endpoint:     getEnv("OCR_ENDPOINT", "http://phr-ocr-worker:8081/ocr"),
+			Timeout:      getEnvAsDuration("OCR_TIMEOUT", 180*time.Second),
+			MaxFileBytes: getEnvAsInt64("OCR_MAX_FILE_BYTES", 25*1024*1024),
 		},
 		UploadProvider: UploadProvider(getEnv("UPLOAD_PROVIDER", "cloudreve")),
 	}
@@ -147,6 +153,18 @@ func getEnvAsInt(key string, defaultValue int) int {
 		return defaultValue
 	}
 	value, err := strconv.Atoi(valueStr)
+	if err != nil {
+		return defaultValue
+	}
+	return value
+}
+
+func getEnvAsInt64(key string, defaultValue int64) int64 {
+	valueStr := getEnv(key, "")
+	if valueStr == "" {
+		return defaultValue
+	}
+	value, err := strconv.ParseInt(valueStr, 10, 64)
 	if err != nil {
 		return defaultValue
 	}

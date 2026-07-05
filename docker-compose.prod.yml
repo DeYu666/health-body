@@ -9,6 +9,20 @@ services:
       - ./.env.production
     ports:
       - "8080:8080"
+    depends_on:
+      - phr-ocr-worker
+    networks:
+      - immich_default
+
+  phr-ocr-worker:
+    image: health-body-ocr-worker:local
+    build:
+      context: ./workers/ocr
+    container_name: phr-ocr-worker
+    restart: unless-stopped
+    environment:
+      OCR_MAX_PAGES: ${OCR_MAX_PAGES:-10}
+      OCR_MIN_SCORE: ${OCR_MIN_SCORE:-0.45}
     networks:
       - immich_default
 

@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   postgres:
     image: postgres:16-alpine
@@ -23,10 +21,19 @@ services:
       - ./backend/.env.example
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/phr?sslmode=disable
+      OCR_PROVIDER: http
+      OCR_ENDPOINT: http://ocr-worker:8081/ocr
     ports:
       - "8080:8080"
     depends_on:
       - postgres
+      - ocr-worker
+
+  ocr-worker:
+    build:
+      context: ./workers/ocr
+    container_name: phr-ocr-worker
+    restart: unless-stopped
 
   frontend:
     build:

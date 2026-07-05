@@ -72,6 +72,7 @@ func (a *sensenovaAIAnalyzer) AnalyzeDocument(ctx context.Context, input AIAnaly
 	if content == "" {
 		return nil, ErrAIUnavailable
 	}
+	content = truncateText(content, 12000)
 
 	requestBody := map[string]any{
 		"model": a.model,
