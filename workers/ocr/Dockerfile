@@ -40,9 +40,13 @@ if not matches:
 
 for utility_path in matches:
     source = utility_path.read_text()
+    replacement = "config.switch_ir_optim(getattr(args, 'ir_optim', True))"
+    if replacement in source:
+        print(f"already patched {utility_path}")
+        continue
     patched = source.replace(
         "config.switch_ir_optim(True)",
-        "config.switch_ir_optim(getattr(args, 'ir_optim', True))",
+        replacement,
     )
     if patched == source:
         raise SystemExit(f"IR optim patch target not found in {utility_path}")
