@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -139,17 +140,17 @@ func parseAIAnalysisContent(content string, fallbackCategory string) *AIAnalyzeD
 	}
 
 	var parsed struct {
-		Summary    string  `json:"summary"`
-		Conclusion string  `json:"conclusion"`
-		Category   string  `json:"category"`
-		Confidence float64 `json:"confidence"`
+		Summary    string `json:"summary"`
+		Conclusion string `json:"conclusion"`
+		Category   string `json:"category"`
+		Confidence any    `json:"confidence"`
 	}
 	if err := json.Unmarshal([]byte(jsonText), &parsed); err == nil {
 		return &AIAnalyzeDocumentOutput{
 			Summary:    strings.TrimSpace(parsed.Summary),
 			Conclusion: strings.TrimSpace(parsed.Conclusion),
 			Category:   normalizeDocumentCategory(parsed.Category, fallbackCategory),
-			Confidence: clampConfidence(parsed.Confidence),
+			Confidence: clampConfidence(parseAIConfidence(parsed.Confidence)),
 		}
 	}
 
@@ -169,4 +170,26 @@ func clampConfidence(value float64) float64 {
 		return 1
 	}
 	return value
+}
+
+func parseAIConfidence(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case string:
+		switch strings.TrimSpace(typed) {
+		case "高", "high", "High", "HIGH":
+			return 0.85
+		case "中", "medium", "Medium", "MEDIUM":
+			return 0.65
+		case "低", "low", "Low", "LOW":
+			return 0.45
+		default:
+			parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+			if err == nil {
+				return parsed
+			}
+		}
+	}
+	return 0.45
 }

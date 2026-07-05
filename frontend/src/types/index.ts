@@ -55,6 +55,8 @@ export interface ParsedDocumentObservation {
   valueNumber?: number
   valueText: string
   unit: string
+  referenceLow?: number
+  referenceHigh?: number
   referenceText: string
   abnormalFlag: string
   observedAt?: string

@@ -148,6 +148,8 @@ interface ParsedDocumentResponse {
     valueNumber?: number
     valueText: string
     unit: string
+    referenceLow?: number
+    referenceHigh?: number
     referenceText: string
     abnormalFlag: string
     observedAt?: string
@@ -471,6 +473,37 @@ class ApiClient {
 
   async getDocumentByLegacyReport(reportId: string): Promise<ParsedHealthDocument> {
     return this.request<ParsedDocumentResponse>(`/documents/by-legacy-report/${reportId}`)
+  }
+
+  async updateDocumentReview(
+    documentId: string,
+    payload: {
+      category: string
+      summary: string
+      aiConclusion: string
+      confidence?: number
+      status: string
+      observations: Array<{
+        name: string
+        normalizedName: string
+        code: string
+        valueNumber?: number
+        valueText: string
+        unit: string
+        referenceLow?: number
+        referenceHigh?: number
+        referenceText: string
+        abnormalFlag: string
+        observedAt?: string
+        confidence?: number
+        reviewStatus: string
+      }>
+    },
+  ): Promise<ParsedHealthDocument> {
+    return this.request<ParsedDocumentResponse>(`/documents/${documentId}/review`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
   }
 
   async createReport(

@@ -63,3 +63,25 @@ func TestMetricInputsFromObservations(t *testing.T) {
 		t.Fatalf("PrimaryValue = %v, want 150", metrics[0].PrimaryValue)
 	}
 }
+
+func TestParseAIAnalysisContentAcceptsStringConfidence(t *testing.T) {
+	output := parseAIAnalysisContent(`{
+		"summary": "尿常规检查，白细胞镜检未找到。",
+		"conclusion": "多项指标阴性，需结合镜检判断。",
+		"category": "检验",
+		"confidence": "高"
+	}`, "其他")
+
+	if output.Summary != "尿常规检查，白细胞镜检未找到。" {
+		t.Fatalf("Summary = %s", output.Summary)
+	}
+	if output.Conclusion != "多项指标阴性，需结合镜检判断。" {
+		t.Fatalf("Conclusion = %s", output.Conclusion)
+	}
+	if output.Category != "检验" {
+		t.Fatalf("Category = %s", output.Category)
+	}
+	if output.Confidence != 0.85 {
+		t.Fatalf("Confidence = %v, want 0.85", output.Confidence)
+	}
+}

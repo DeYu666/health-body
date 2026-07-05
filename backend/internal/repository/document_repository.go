@@ -26,6 +26,7 @@ type DocumentRepository interface {
 	List(ctx context.Context, filter DocumentFilter) ([]models.HealthDocument, int64, error)
 	CountOpenReviewTasks(ctx context.Context, documentID uuid.UUID) (int64, error)
 	ReplaceObservations(ctx context.Context, userID uuid.UUID, documentID uuid.UUID, observations []models.ExtractedObservation) error
+	UpdateReview(ctx context.Context, userID uuid.UUID, documentID uuid.UUID, fields map[string]any, observations []models.ExtractedObservation) error
 	ExistsForLegacyReport(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) (bool, error)
 	LegacyReportNeedsOCRRetry(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) (bool, error)
 	DeleteForLegacyReport(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) error
@@ -210,6 +211,42 @@ func (r *documentRepository) ReplaceObservations(ctx context.Context, userID uui
 			observations[i].ID = uuid.Nil
 			observations[i].UserID = userID
 			observations[i].DocumentID = documentID
+			if len(observations[i].SourceBBoxJSON) == 0 {
+				observations[i].SourceBBoxJSON = []byte("{}")
+			}
+			if observations[i].ReviewStatus == "" {
+				observations[i].ReviewStatus = "pending"
+			}
+		}
+		return tx.Create(&observations).Error
+	})
+}
+
+func (r *documentRepository) UpdateReview(ctx context.Context, userID uuid.UUID, documentID uuid.UUID, fields map[string]any, observations []models.ExtractedObservation) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&models.HealthDocument{}).
+			Where("id = ? AND user_id = ?", documentID, userID).
+			Updates(fields)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+
+		if err := tx.Where("user_id = ? AND document_id = ?", userID, documentID).Delete(&models.ExtractedObservation{}).Error; err != nil {
+			return err
+		}
+		if len(observations) == 0 {
+			return nil
+		}
+		for i := range observations {
+			observations[i].ID = uuid.Nil
+			observations[i].UserID = userID
+			observations[i].DocumentID = documentID
+			if observations[i].CodeSystem == "" {
+				observations[i].CodeSystem = "local"
+			}
 			if len(observations[i].SourceBBoxJSON) == 0 {
 				observations[i].SourceBBoxJSON = []byte("{}")
 			}

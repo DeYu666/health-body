@@ -25,6 +25,7 @@ type DocumentService interface {
 	List(ctx context.Context, filter repository.DocumentFilter) (*PaginatedDocuments, error)
 	Get(ctx context.Context, userID uuid.UUID, documentID uuid.UUID) (*DocumentDTO, error)
 	GetByLegacyReport(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) (*DocumentDTO, error)
+	UpdateReview(ctx context.Context, userID uuid.UUID, documentID uuid.UUID, input UpdateDocumentReviewInput) (*DocumentDTO, error)
 }
 
 type documentService struct {
@@ -104,6 +105,8 @@ type DocumentObservationDTO struct {
 	ValueNumber    *float64   `json:"valueNumber,omitempty"`
 	ValueText      string     `json:"valueText"`
 	Unit           string     `json:"unit"`
+	ReferenceLow   *float64   `json:"referenceLow,omitempty"`
+	ReferenceHigh  *float64   `json:"referenceHigh,omitempty"`
 	ReferenceText  string     `json:"referenceText"`
 	AbnormalFlag   string     `json:"abnormalFlag"`
 	ObservedAt     *time.Time `json:"observedAt,omitempty"`
@@ -131,6 +134,31 @@ type DocumentDTO struct {
 	Analyses        []DocumentAnalysisDTO    `json:"analyses,omitempty"`
 	CreatedAt       time.Time                `json:"createdAt"`
 	UpdatedAt       time.Time                `json:"updatedAt"`
+}
+
+type UpdateDocumentReviewInput struct {
+	Category     string                           `json:"category"`
+	Summary      string                           `json:"summary"`
+	AIConclusion string                           `json:"aiConclusion"`
+	Confidence   *float64                         `json:"confidence"`
+	Status       string                           `json:"status"`
+	Observations []UpdateDocumentObservationInput `json:"observations"`
+}
+
+type UpdateDocumentObservationInput struct {
+	Name           string     `json:"name"`
+	NormalizedName string     `json:"normalizedName"`
+	Code           string     `json:"code"`
+	ValueNumber    *float64   `json:"valueNumber"`
+	ValueText      string     `json:"valueText"`
+	Unit           string     `json:"unit"`
+	ReferenceLow   *float64   `json:"referenceLow"`
+	ReferenceHigh  *float64   `json:"referenceHigh"`
+	ReferenceText  string     `json:"referenceText"`
+	AbnormalFlag   string     `json:"abnormalFlag"`
+	ObservedAt     *time.Time `json:"observedAt"`
+	Confidence     *float64   `json:"confidence"`
+	ReviewStatus   string     `json:"reviewStatus"`
 }
 
 type ImportedDocumentDTO struct {
@@ -546,6 +574,89 @@ func (s *documentService) GetByLegacyReport(ctx context.Context, userID uuid.UUI
 	return s.mapDocumentToDTO(ctx, document)
 }
 
+func (s *documentService) UpdateReview(ctx context.Context, userID uuid.UUID, documentID uuid.UUID, input UpdateDocumentReviewInput) (*DocumentDTO, error) {
+	document, err := s.repo.FindByID(ctx, documentID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if document == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	confidence := 0.75
+	if document.Confidence != nil {
+		confidence = *document.Confidence
+	}
+	if input.Confidence != nil {
+		confidence = clampConfidence(*input.Confidence)
+	}
+	status := normalizeDocumentStatus(input.Status)
+	observations := make([]models.ExtractedObservation, 0, len(input.Observations))
+	for _, observation := range input.Observations {
+		name := strings.TrimSpace(observation.Name)
+		if name == "" {
+			continue
+		}
+		valueText := strings.TrimSpace(observation.ValueText)
+		if valueText == "" && observation.ValueNumber != nil {
+			valueText = strconv.FormatFloat(*observation.ValueNumber, 'f', -1, 64)
+		}
+		observedAt := observation.ObservedAt
+		if observedAt == nil {
+			observedAt = document.DocumentDate
+		}
+		confidenceValue := confidence
+		if observation.Confidence != nil {
+			confidenceValue = clampConfidence(*observation.Confidence)
+		}
+		observations = append(observations, models.ExtractedObservation{
+			Name:           name,
+			NormalizedName: firstNonEmpty(strings.TrimSpace(observation.NormalizedName), normalizeObservationName(name)),
+			CodeSystem:     "local",
+			Code:           strings.TrimSpace(observation.Code),
+			ValueNumber:    observation.ValueNumber,
+			ValueText:      valueText,
+			Unit:           strings.TrimSpace(observation.Unit),
+			ReferenceLow:   observation.ReferenceLow,
+			ReferenceHigh:  observation.ReferenceHigh,
+			ReferenceText:  strings.TrimSpace(observation.ReferenceText),
+			AbnormalFlag:   normalizeAbnormalFlag(observation.AbnormalFlag),
+			ObservedAt:     observedAt,
+			SourceBBoxJSON: datatypes.JSON([]byte("{}")),
+			Confidence:     &confidenceValue,
+			ReviewStatus:   normalizeReviewStatus(observation.ReviewStatus),
+		})
+	}
+
+	fields := map[string]any{
+		"category":      normalizeDocumentCategory(input.Category, document.Category),
+		"summary":       strings.TrimSpace(input.Summary),
+		"ai_conclusion": strings.TrimSpace(input.AIConclusion),
+		"confidence":    confidence,
+		"status":        status,
+	}
+	if err := s.repo.UpdateReview(ctx, userID, document.ID, fields, observations); err != nil {
+		return nil, err
+	}
+
+	if s.metricService != nil {
+		if err := s.metricService.DeleteDocumentLinked(ctx, userID, document.ID); err != nil {
+			return nil, err
+		}
+		observedAt := time.Now()
+		if document.DocumentDate != nil {
+			observedAt = *document.DocumentDate
+		}
+		for _, metric := range metricInputsFromObservations(observations, observedAt, document.Title, document.ID) {
+			if _, err := s.metricService.Create(ctx, userID, metric); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return s.Get(ctx, userID, document.ID)
+}
+
 func (s *documentService) createLegacyReport(ctx context.Context, userID uuid.UUID, document *models.HealthDocument, input ImportDocumentInput) (*ReportDTO, error) {
 	reportFiles := make([]CreateReportFileInput, 0, len(input.Files))
 	for i, file := range input.Files {
@@ -584,6 +695,7 @@ func (s *documentService) mapDocumentToDTO(ctx context.Context, document *models
 	if err != nil {
 		return nil, err
 	}
+	aiFields := normalizedDocumentAIFields(document)
 
 	files := make([]DocumentFileDTO, 0, len(document.Files))
 	for _, file := range document.Files {
@@ -630,6 +742,8 @@ func (s *documentService) mapDocumentToDTO(ctx context.Context, document *models
 			ValueNumber:    observation.ValueNumber,
 			ValueText:      observation.ValueText,
 			Unit:           observation.Unit,
+			ReferenceLow:   observation.ReferenceLow,
+			ReferenceHigh:  observation.ReferenceHigh,
 			ReferenceText:  observation.ReferenceText,
 			AbnormalFlag:   observation.AbnormalFlag,
 			ObservedAt:     observation.ObservedAt,
@@ -641,16 +755,16 @@ func (s *documentService) mapDocumentToDTO(ctx context.Context, document *models
 	return &DocumentDTO{
 		ID:              document.ID,
 		Title:           document.Title,
-		Category:        document.Category,
+		Category:        aiFields.Category,
 		Subcategory:     document.Subcategory,
 		SourceType:      document.SourceType,
 		Status:          document.Status,
 		Organization:    document.Organization,
 		Department:      document.Department,
 		DocumentDate:    document.DocumentDate,
-		Summary:         document.Summary,
-		AIConclusion:    document.AIConclusion,
-		Confidence:      document.Confidence,
+		Summary:         aiFields.Summary,
+		AIConclusion:    aiFields.Conclusion,
+		Confidence:      aiFields.Confidence,
 		ReviewTaskCount: reviewCount,
 		Files:           files,
 		OCRResults:      ocrResults,
@@ -789,6 +903,77 @@ func buildReviewTasks(userID uuid.UUID, status string, input ImportDocumentInput
 	return tasks
 }
 
+type documentAIFields struct {
+	Summary    string
+	Conclusion string
+	Category   string
+	Confidence *float64
+}
+
+func normalizedDocumentAIFields(document *models.HealthDocument) documentAIFields {
+	fields := documentAIFields{
+		Summary:    document.Summary,
+		Conclusion: document.AIConclusion,
+		Category:   document.Category,
+		Confidence: document.Confidence,
+	}
+	if parsed, ok := parseStoredAIJSON(document.Summary); ok {
+		if parsed.Summary != "" {
+			fields.Summary = parsed.Summary
+		}
+		if parsed.Conclusion != "" {
+			fields.Conclusion = parsed.Conclusion
+		}
+		if parsed.Category != "" {
+			fields.Category = normalizeDocumentCategory(parsed.Category, document.Category)
+		}
+		if parsed.Confidence != nil {
+			fields.Confidence = parsed.Confidence
+		}
+	}
+	return fields
+}
+
+type storedAIJSON struct {
+	Summary    string
+	Conclusion string
+	Category   string
+	Confidence *float64
+}
+
+func parseStoredAIJSON(value string) (storedAIJSON, bool) {
+	text := strings.TrimSpace(value)
+	if text == "" || !strings.Contains(text, "{") || !strings.Contains(text, "}") {
+		return storedAIJSON{}, false
+	}
+	jsonText := text
+	if start := strings.Index(text, "{"); start >= 0 {
+		if end := strings.LastIndex(text, "}"); end > start {
+			jsonText = text[start : end+1]
+		}
+	}
+	var parsed struct {
+		Summary    string `json:"summary"`
+		Conclusion string `json:"conclusion"`
+		Category   string `json:"category"`
+		Confidence any    `json:"confidence"`
+	}
+	if err := json.Unmarshal([]byte(jsonText), &parsed); err != nil {
+		return storedAIJSON{}, false
+	}
+	var confidence *float64
+	if parsed.Confidence != nil {
+		parsedConfidence := clampConfidence(parseAIConfidence(parsed.Confidence))
+		confidence = &parsedConfidence
+	}
+	return storedAIJSON{
+		Summary:    strings.TrimSpace(parsed.Summary),
+		Conclusion: strings.TrimSpace(parsed.Conclusion),
+		Category:   strings.TrimSpace(parsed.Category),
+		Confidence: confidence,
+	}, true
+}
+
 func normalizeDocumentCategory(value string, fallback string) string {
 	category := strings.TrimSpace(value)
 	if category == "" || category == "AI待分类" || category == "AI 自动分类" {
@@ -800,6 +985,38 @@ func normalizeDocumentCategory(value string, fallback string) string {
 	default:
 		return "其他"
 	}
+}
+
+func normalizeDocumentStatus(value string) string {
+	switch strings.TrimSpace(value) {
+	case "ready", "needs_review", "uploaded", "processing", "failed":
+		return strings.TrimSpace(value)
+	default:
+		return "ready"
+	}
+}
+
+func normalizeAbnormalFlag(value string) string {
+	switch strings.TrimSpace(value) {
+	case "high", "low", "normal":
+		return strings.TrimSpace(value)
+	default:
+		return "normal"
+	}
+}
+
+func normalizeReviewStatus(value string) string {
+	switch strings.TrimSpace(value) {
+	case "confirmed", "rejected", "pending":
+		return strings.TrimSpace(value)
+	default:
+		return "confirmed"
+	}
+}
+
+func normalizeObservationName(value string) string {
+	replacer := strings.NewReplacer(" ", "_", "-", "_", "%", "percent")
+	return strings.ToLower(replacer.Replace(strings.TrimSpace(value)))
 }
 
 func normalizeMimeType(mimeType string, fileType string, fileURL string) string {
@@ -1134,11 +1351,15 @@ func metricInputsFromObservations(observations []models.ExtractedObservation, re
 			continue
 		}
 		seen[metricType] = struct{}{}
+		metricRecordedAt := recordedAt
+		if observation.ObservedAt != nil {
+			metricRecordedAt = *observation.ObservedAt
+		}
 		metrics = append(metrics, CreateMetricInput{
 			MetricType:   metricType,
 			PrimaryValue: *observation.ValueNumber,
 			Unit:         observation.Unit,
-			RecordedAt:   recordedAt,
+			RecordedAt:   metricRecordedAt,
 			Notes:        notesPrefix + "；项目：" + observation.Name,
 		})
 	}

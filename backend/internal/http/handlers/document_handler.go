@@ -137,6 +137,36 @@ func (h *DocumentHandler) GetDocumentByLegacyReport(c *gin.Context) {
 	c.JSON(http.StatusOK, document)
 }
 
+func (h *DocumentHandler) UpdateDocumentReview(c *gin.Context) {
+	userID, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	documentID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的资料 ID"})
+		return
+	}
+
+	var input service.UpdateDocumentReviewInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	document, err := h.service.UpdateReview(c.Request.Context(), userID, documentID, input)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "资料不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, document)
+}
+
 func (h *DocumentHandler) GetDocumentStatus(c *gin.Context) {
 	userID, ok := requireUser(c)
 	if !ok {

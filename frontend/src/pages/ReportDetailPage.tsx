@@ -4,13 +4,16 @@ import {
   FaBrain,
   FaCalendarAlt,
   FaDownload,
+  FaEdit,
   FaFileAlt,
   FaFilePdf,
   FaHospital,
   FaLink,
   FaMicroscope,
+  FaSave,
   FaShareAlt,
   FaShieldAlt,
+  FaTimes,
   FaTrash,
 } from 'react-icons/fa'
 import { useNavigate, useOutletContext, useParams } from 'react-router-dom'
@@ -40,6 +43,57 @@ const abnormalFlagLabel: Record<string, string> = {
   normal: '正常',
 }
 
+const categoryOptions = ['体检', '检验', '影像', '病历', '用药', '其他']
+const statusOptions = [
+  { value: 'ready', label: '已确认' },
+  { value: 'needs_review', label: '待复核' },
+]
+const reviewStatusOptions = [
+  { value: 'confirmed', label: '已确认' },
+  { value: 'pending', label: '待复核' },
+  { value: 'rejected', label: '已驳回' },
+]
+const abnormalOptions = [
+  { value: 'normal', label: '正常' },
+  { value: 'high', label: '偏高' },
+  { value: 'low', label: '偏低' },
+]
+
+type ObservationForm = ParsedDocumentObservation & {
+  valueInput: string
+}
+
+interface ReviewForm {
+  category: string
+  summary: string
+  aiConclusion: string
+  confidence: string
+  status: string
+  observations: ObservationForm[]
+}
+
+const buildReviewForm = (document: ParsedHealthDocument): ReviewForm => ({
+  category: document.category || '其他',
+  summary: document.summary || '',
+  aiConclusion: document.aiConclusion || '',
+  confidence: typeof document.confidence === 'number' ? String(document.confidence) : '',
+  status: document.status || 'needs_review',
+  observations: (document.observations ?? []).map((observation) => ({
+    ...observation,
+    valueInput:
+      typeof observation.valueNumber === 'number'
+        ? String(observation.valueNumber)
+        : observation.valueText,
+  })),
+})
+
+const parseOptionalNumber = (value: string) => {
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  const parsed = Number(trimmed)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
 export const ReportDetailPage: React.FC = () => {
   const { reportId } = useParams<{ reportId: string }>()
   const navigate = useNavigate()
@@ -48,6 +102,10 @@ export const ReportDetailPage: React.FC = () => {
   const [parsedDocument, setParsedDocument] = useState<ParsedHealthDocument | null>(null)
   const [parseStatus, setParseStatus] = useState<'idle' | 'loading' | 'loaded' | 'empty' | 'error'>('idle')
   const [parseError, setParseError] = useState<string | null>(null)
+  const [isEditingReview, setIsEditingReview] = useState(false)
+  const [reviewForm, setReviewForm] = useState<ReviewForm | null>(null)
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving'>('idle')
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   const report = useMemo(
     () => reports.find((item) => item.id === reportId),
@@ -72,11 +130,15 @@ export const ReportDetailPage: React.FC = () => {
       .then((document) => {
         if (!active) return
         setParsedDocument(document)
+        setReviewForm(buildReviewForm(document))
+        setIsEditingReview(false)
         setParseStatus('loaded')
       })
       .catch((err) => {
         if (!active) return
         setParsedDocument(null)
+        setReviewForm(null)
+        setIsEditingReview(false)
         const message = err instanceof Error ? err.message : '加载 OCR/AI 解析失败'
         if (message.includes('资料不存在')) {
           setParseStatus('empty')
@@ -139,6 +201,74 @@ export const ReportDetailPage: React.FC = () => {
     }
   }
 
+  const handleStartEditReview = () => {
+    if (!parsedDocument) return
+    setReviewForm(buildReviewForm(parsedDocument))
+    setSaveError(null)
+    setIsEditingReview(true)
+  }
+
+  const handleCancelEditReview = () => {
+    if (parsedDocument) {
+      setReviewForm(buildReviewForm(parsedDocument))
+    }
+    setSaveError(null)
+    setIsEditingReview(false)
+  }
+
+  const updateObservationForm = (
+    index: number,
+    field: keyof ObservationForm,
+    value: string,
+  ) => {
+    setReviewForm((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        observations: prev.observations.map((observation, currentIndex) =>
+          currentIndex === index ? { ...observation, [field]: value } : observation,
+        ),
+      }
+    })
+  }
+
+  const handleSaveReview = async () => {
+    if (!parsedDocument || !reviewForm) return
+    setSaveStatus('saving')
+    setSaveError(null)
+    try {
+      const updated = await api.updateDocumentReview(parsedDocument.id, {
+        category: reviewForm.category,
+        summary: reviewForm.summary,
+        aiConclusion: reviewForm.aiConclusion,
+        confidence: parseOptionalNumber(reviewForm.confidence),
+        status: reviewForm.status,
+        observations: reviewForm.observations.map((observation) => ({
+          name: observation.name,
+          normalizedName: observation.normalizedName,
+          code: observation.code,
+          valueNumber: parseOptionalNumber(observation.valueInput),
+          valueText: observation.valueInput,
+          unit: observation.unit,
+          referenceLow: observation.referenceLow,
+          referenceHigh: observation.referenceHigh,
+          referenceText: observation.referenceText,
+          abnormalFlag: observation.abnormalFlag,
+          observedAt: observation.observedAt,
+          confidence: observation.confidence,
+          reviewStatus: observation.reviewStatus,
+        })),
+      })
+      setParsedDocument(updated)
+      setReviewForm(buildReviewForm(updated))
+      setIsEditingReview(false)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : '保存失败，请稍后重试')
+    } finally {
+      setSaveStatus('idle')
+    }
+  }
+
   const PreviewIcon = report.fileType === 'pdf' ? FaFilePdf : FaFileAlt
   const latestOCR = parsedDocument?.ocrResults?.[0]
   const observations = parsedDocument?.observations ?? []
@@ -192,9 +322,30 @@ export const ReportDetailPage: React.FC = () => {
             </div>
           </div>
           {parsedDocument ? (
-            <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-500">
-              置信度 {formatConfidence(parsedDocument.confidence)}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-500">
+                置信度 {formatConfidence(parsedDocument.confidence)}
+              </span>
+              {isEditingReview ? (
+                <button
+                  type="button"
+                  onClick={handleCancelEditReview}
+                  className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-slate-500 transition hover:bg-slate-100"
+                  aria-label="取消编辑"
+                >
+                  <FaTimes />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleStartEditReview}
+                  className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-slate-500 transition hover:bg-primary hover:text-white"
+                  aria-label="编辑解析结果"
+                >
+                  <FaEdit />
+                </button>
+              )}
+            </div>
           ) : null}
         </div>
 
@@ -216,7 +367,187 @@ export const ReportDetailPage: React.FC = () => {
           </div>
         ) : null}
 
-        {parsedDocument ? (
+        {parsedDocument && reviewForm && isEditingReview ? (
+          <div className="space-y-3">
+            <div className="rounded-xl bg-white p-4">
+              <div className="grid gap-3 md:grid-cols-3">
+                <label className="text-xs font-semibold text-slate-500">
+                  分类
+                  <select
+                    value={reviewForm.category}
+                    onChange={(event) =>
+                      setReviewForm((prev) =>
+                        prev ? { ...prev, category: event.target.value } : prev,
+                      )
+                    }
+                    className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                  >
+                    {categoryOptions.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-xs font-semibold text-slate-500">
+                  状态
+                  <select
+                    value={reviewForm.status}
+                    onChange={(event) =>
+                      setReviewForm((prev) =>
+                        prev ? { ...prev, status: event.target.value } : prev,
+                      )
+                    }
+                    className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                  >
+                    {statusOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-xs font-semibold text-slate-500">
+                  置信度
+                  <input
+                    type="number"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={reviewForm.confidence}
+                    onChange={(event) =>
+                      setReviewForm((prev) =>
+                        prev ? { ...prev, confidence: event.target.value } : prev,
+                      )
+                    }
+                    className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                  />
+                </label>
+              </div>
+              <label className="mt-4 block text-xs font-semibold text-slate-500">
+                摘要
+                <textarea
+                  value={reviewForm.summary}
+                  onChange={(event) =>
+                    setReviewForm((prev) =>
+                      prev ? { ...prev, summary: event.target.value } : prev,
+                    )
+                  }
+                  rows={4}
+                  className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm leading-6 text-slate-800"
+                />
+              </label>
+              <label className="mt-4 block text-xs font-semibold text-slate-500">
+                结论
+                <textarea
+                  value={reviewForm.aiConclusion}
+                  onChange={(event) =>
+                    setReviewForm((prev) =>
+                      prev ? { ...prev, aiConclusion: event.target.value } : prev,
+                    )
+                  }
+                  rows={3}
+                  className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm leading-6 text-slate-800"
+                />
+              </label>
+            </div>
+
+            {reviewForm.observations.length > 0 ? (
+              <div className="rounded-xl bg-white p-4">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800">
+                  <FaMicroscope className="text-primary" />
+                  校验结构化指标
+                </div>
+                <div className="space-y-3">
+                  {reviewForm.observations.map((observation, index) => (
+                    <div key={`${observation.id}-${index}`} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                      <div className="grid gap-3 md:grid-cols-[1.2fr_1fr_0.8fr]">
+                        <label className="text-xs font-semibold text-slate-500">
+                          项目
+                          <input
+                            value={observation.name}
+                            onChange={(event) => updateObservationForm(index, 'name', event.target.value)}
+                            className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                          />
+                        </label>
+                        <label className="text-xs font-semibold text-slate-500">
+                          数值
+                          <input
+                            value={observation.valueInput}
+                            onChange={(event) => updateObservationForm(index, 'valueInput', event.target.value)}
+                            className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                          />
+                        </label>
+                        <label className="text-xs font-semibold text-slate-500">
+                          单位
+                          <input
+                            value={observation.unit}
+                            onChange={(event) => updateObservationForm(index, 'unit', event.target.value)}
+                            className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                          />
+                        </label>
+                      </div>
+                      <div className="mt-3 grid gap-3 md:grid-cols-3">
+                        <label className="text-xs font-semibold text-slate-500">
+                          异常标记
+                          <select
+                            value={observation.abnormalFlag}
+                            onChange={(event) => updateObservationForm(index, 'abnormalFlag', event.target.value)}
+                            className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                          >
+                            {abnormalOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="text-xs font-semibold text-slate-500">
+                          复核状态
+                          <select
+                            value={observation.reviewStatus}
+                            onChange={(event) => updateObservationForm(index, 'reviewStatus', event.target.value)}
+                            className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                          >
+                            {reviewStatusOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="text-xs font-semibold text-slate-500">
+                          参考范围
+                          <input
+                            value={observation.referenceText}
+                            onChange={(event) => updateObservationForm(index, 'referenceText', event.target.value)}
+                            className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {saveError ? (
+              <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+                {saveError}
+              </div>
+            ) : null}
+
+            <button
+              type="button"
+              onClick={handleSaveReview}
+              disabled={saveStatus === 'saving'}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <FaSave />
+              {saveStatus === 'saving' ? '保存中...' : '保存人工校验'}
+            </button>
+          </div>
+        ) : parsedDocument ? (
           <div className="space-y-3">
             <div className="rounded-xl bg-white px-4 py-3 text-sm text-slate-600">
               <div className="flex flex-wrap gap-2">
