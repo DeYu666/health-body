@@ -2,14 +2,16 @@
 
 ## OCR/AI health document pipeline
 
-- Add `POST /api/v1/documents/import` to create `health_documents` and `document_files` from uploaded files or natural-language notes.
+- [x] Add `POST /api/v1/documents/import` to create `health_documents` and `document_files` from uploaded files or natural-language notes.
+- [x] Add synchronous fallback analysis that stores `ocr_results`, `ai_analyses`, review tasks, and a legacy `reports` record for current archive UI compatibility.
+- [x] Add SenseNova OpenAI-compatible client configuration with safe fallback when `SENSENOVA_API_KEY` is unavailable.
+- [x] Switch the frontend import page to upload files first, then call `documents/import`.
 - Add async processing jobs for OCR, AI classification, AI extraction, review task generation, and observation trend sync.
 - Reuse the `ai-family-menu` OCR pattern: PaddleOCR worker image, host upload/cache directories, Docker-run worker isolation.
-- Reuse the `ai-family-menu` AI pattern: SenseNova OpenAI-compatible client with `SENSENOVA_API_KEY`, text model, and smart model env vars.
 - Persist OCR text and layout into `ocr_results`.
 - Persist extracted lab/vital observations into `extracted_observations`.
-- Persist summary, risks, recommendations, and source citations into `ai_analyses`.
-- Persist low-confidence confirmation items into `review_tasks`.
+- Persist structured summary, risks, recommendations, and source citations into `ai_analyses`.
+- Expand low-confidence confirmation items in `review_tasks`.
 - Add UI for processing status, source highlighting, and confirmation workflow.
 
 ## Deployment hygiene

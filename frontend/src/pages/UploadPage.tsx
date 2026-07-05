@@ -1,5 +1,4 @@
 import clsx from 'classnames'
-import dayjs from 'dayjs'
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate, useOutletContext } from 'react-router-dom'
 import {
@@ -17,7 +16,7 @@ import {
 import type { ChangeEvent, DragEvent as ReactDragEvent } from 'react'
 import type { AppShellContextValue } from '../components/layout/AppShell'
 import { useAppState } from '../context/AppStateContext'
-import type { UploadPayload } from '../types'
+import { api } from '../lib/api'
 
 const categoryOptions = [
   { label: 'AI 自动分类', value: 'AI待分类' },
@@ -47,7 +46,7 @@ export const UploadPage: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const { setHeaderConfig } = useOutletContext<AppShellContextValue>()
-  const { addReport } = useAppState()
+  const { refreshReports } = useAppState()
 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [category, setCategory] = useState(categoryOptions[0].value)
@@ -119,26 +118,42 @@ export const UploadPage: React.FC = () => {
     setStatus('uploading')
     setProgress(0)
 
-    const generatedNotes = [
-      'AI-native 导入：当前已保存原始资料，等待 OCR/AI 服务接入后自动识别。',
-      quickNote.trim() ? `用户补充：${quickNote.trim()}` : '',
-      `分类提示：${category}`,
-    ]
-      .filter(Boolean)
-      .join('\n')
-
-    const payload: UploadPayload = {
-      title: estimatedTitle,
-      hospital: 'AI 待识别',
-      reportDate: dayjs().toISOString(),
-      tags: ['AI待处理', category].filter((tag, index, array) => array.indexOf(tag) === index),
-      notes: generatedNotes,
-      file: firstFile,
-      files: selectedFiles.length > 0 ? selectedFiles : undefined,
-    }
-
     try {
-      await addReport(payload, setProgress)
+      const uploadedFiles = []
+      if (selectedFiles.length > 0) {
+        for (let index = 0; index < selectedFiles.length; index += 1) {
+          const file = selectedFiles[index]
+          const uploadResult = await api.uploadFile(file, (fileProgress) => {
+            const uploadProgress = Math.round(
+              (index / selectedFiles.length) * 80 +
+                (fileProgress / 100) * (80 / selectedFiles.length),
+            )
+            setProgress(Math.min(uploadProgress, 84))
+          })
+
+          uploadedFiles.push({
+            fileUrl: uploadResult.url,
+            previewUrl: uploadResult.url,
+            mimeType: file.type,
+            fileType: uploadResult.fileType,
+            fileSize: uploadResult.fileSize,
+            displayOrder: index,
+          })
+        }
+      } else {
+        setProgress(24)
+      }
+
+      setProgress((current) => Math.max(current, 88))
+      await api.importDocument({
+        title: estimatedTitle,
+        category,
+        sourceType: selectedFiles.length > 0 ? 'upload' : 'text',
+        note: quickNote.trim(),
+        files: uploadedFiles,
+      })
+      setProgress(100)
+      await refreshReports()
       setStatus('success')
       setTimeout(() => {
         navigate('/archive', { replace: true })

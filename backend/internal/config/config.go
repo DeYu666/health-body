@@ -46,6 +46,17 @@ type CloudreveConfig struct {
 	RefreshToken string // 可选，用于刷新 token
 }
 
+type AIConfig struct {
+	SenseNovaAPIKey     string
+	SenseNovaBaseURL    string
+	SenseNovaTextModel  string
+	SenseNovaSmartModel string
+}
+
+type OCRConfig struct {
+	Provider string
+}
+
 type UploadProvider string
 
 const (
@@ -61,6 +72,8 @@ type Config struct {
 	Auth           AuthConfig
 	Qiniu          QiniuConfig
 	Cloudreve      CloudreveConfig
+	AI             AIConfig
+	OCR            OCRConfig
 	UploadProvider UploadProvider // 上传渠道选择
 }
 
@@ -101,6 +114,15 @@ func Load() *Config {
 			PolicyID:     getEnv("CLOUDREVE_POLICY_ID", ""),
 			AccessToken:  getEnv("CLOUDREVE_ACCESS_TOKEN", ""),
 			RefreshToken: getEnv("CLOUDREVE_REFRESH_TOKEN", ""),
+		},
+		AI: AIConfig{
+			SenseNovaAPIKey:     getEnv("SENSENOVA_API_KEY", ""),
+			SenseNovaBaseURL:    getEnv("SENSENOVA_BASE_URL", "https://token.sensenova.cn/v1"),
+			SenseNovaTextModel:  getEnv("SENSENOVA_TEXT_MODEL", "deepseek-v4-flash"),
+			SenseNovaSmartModel: getEnv("SENSENOVA_SMART_MODEL", getEnv("SENSENOVA_TEXT_MODEL", "deepseek-v4-flash")),
+		},
+		OCR: OCRConfig{
+			Provider: getEnv("OCR_PROVIDER", "none"),
 		},
 		UploadProvider: UploadProvider(getEnv("UPLOAD_PROVIDER", "cloudreve")),
 	}

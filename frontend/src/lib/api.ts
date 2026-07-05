@@ -79,6 +79,45 @@ interface PaginatedReports {
   offset: number
 }
 
+interface ImportDocumentFile {
+  fileUrl: string
+  previewUrl?: string
+  mimeType?: string
+  fileType?: string
+  fileSize?: number
+  fileSizeMb?: number
+  displayOrder?: number
+}
+
+interface ImportDocumentPayload {
+  title?: string
+  category?: string
+  subcategory?: string
+  sourceType?: string
+  organization?: string
+  department?: string
+  documentDate?: string
+  note?: string
+  files?: ImportDocumentFile[]
+}
+
+interface ImportedDocument {
+  document: {
+    id: string
+    title: string
+    category: string
+    status: string
+    summary: string
+    reviewTaskCount: number
+    createdAt: string
+    updatedAt: string
+  }
+  legacyReport?: {
+    id: string
+    title: string
+  }
+}
+
 class ApiClient {
   private getAuthToken(): string | null {
     if (typeof window === 'undefined') return null
@@ -358,6 +397,15 @@ class ApiClient {
       console.log('[API] 开始发送请求...')
       xhr.send(formData)
       console.log('[API] 请求已发送')
+    })
+  }
+
+  async importDocument(
+    payload: ImportDocumentPayload,
+  ): Promise<ImportedDocument> {
+    return this.request<ImportedDocument>('/documents/import', {
+      method: 'POST',
+      body: JSON.stringify(payload),
     })
   }
 
@@ -761,4 +809,3 @@ class ApiClient {
 
 export const api = new ApiClient()
 export type { AuthToken }
-

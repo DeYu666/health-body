@@ -36,10 +36,13 @@ func main() {
 	userRepo := repository.NewUserRepository(db)
 	reportRepo := repository.NewReportRepository(db)
 	metricRepo := repository.NewMetricRepository(db)
+	documentRepo := repository.NewDocumentRepository(db)
 
 	authService := service.NewAuthService(cfg, userRepo)
 	reportService := service.NewReportService(reportRepo)
 	metricService := service.NewMetricService(metricRepo)
+	aiAnalyzer := service.NewAIAnalyzer(cfg)
+	documentService := service.NewDocumentService(documentRepo, reportService, aiAnalyzer, cfg.OCR.Provider)
 
 	uploadService, err := service.NewUploadService(cfg)
 	if err != nil {
@@ -51,11 +54,12 @@ func main() {
 	seedDemoAccount(userRepo)
 
 	registry := apphttp.HandlerRegistry{
-		Auth:    handlers.NewAuthHandler(authService),
-		Reports: handlers.NewReportHandler(reportService),
-		Metrics: handlers.NewMetricHandler(metricService),
-		Health:  handlers.NewHealthHandler(),
-		Upload:  handlers.NewUploadHandler(uploadService),
+		Auth:      handlers.NewAuthHandler(authService),
+		Reports:   handlers.NewReportHandler(reportService),
+		Metrics:   handlers.NewMetricHandler(metricService),
+		Documents: handlers.NewDocumentHandler(documentService),
+		Health:    handlers.NewHealthHandler(),
+		Upload:    handlers.NewUploadHandler(uploadService),
 	}
 
 	router := apphttp.NewRouter(cfg, registry)

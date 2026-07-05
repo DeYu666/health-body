@@ -14,11 +14,12 @@ type Router struct {
 }
 
 type HandlerRegistry struct {
-	Auth    *handlers.AuthHandler
-	Reports *handlers.ReportHandler
-	Metrics *handlers.MetricHandler
-	Health  *handlers.HealthHandler
-	Upload  *handlers.UploadHandler
+	Auth      *handlers.AuthHandler
+	Reports   *handlers.ReportHandler
+	Metrics   *handlers.MetricHandler
+	Documents *handlers.DocumentHandler
+	Health    *handlers.HealthHandler
+	Upload    *handlers.UploadHandler
 }
 
 func NewRouter(cfg *config.Config, registry HandlerRegistry) *Router {
@@ -63,6 +64,17 @@ func NewRouter(cfg *config.Config, registry HandlerRegistry) *Router {
 		metrics.GET("", registry.Metrics.ListMetrics)
 		metrics.POST("", registry.Metrics.CreateMetric)
 		metrics.GET("/trend", registry.Metrics.TrendSummary)
+	}
+
+	if registry.Documents != nil {
+		documents := api.Group("/documents")
+		documents.Use(middleware.RequireAuth())
+		{
+			documents.GET("", registry.Documents.ListDocuments)
+			documents.POST("/import", registry.Documents.ImportDocument)
+			documents.GET("/:id/status", registry.Documents.GetDocumentStatus)
+			documents.GET("/:id", registry.Documents.GetDocument)
+		}
 	}
 
 	// 文件上传路由
