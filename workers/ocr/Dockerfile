@@ -1,4 +1,5 @@
-FROM paddlepaddle/paddle:2.6.2
+ARG OCR_BASE_IMAGE=paddlepaddle/paddle:2.6.2
+FROM ${OCR_BASE_IMAGE}
 
 WORKDIR /app
 

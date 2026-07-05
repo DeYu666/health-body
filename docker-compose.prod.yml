@@ -18,6 +18,8 @@ services:
     image: health-body-ocr-worker:local
     build:
       context: ./workers/ocr
+      args:
+        OCR_BASE_IMAGE: ${OCR_BASE_IMAGE:-ai-family-menu-ocr:local}
     container_name: phr-ocr-worker
     restart: unless-stopped
     environment:
