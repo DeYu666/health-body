@@ -22,8 +22,10 @@ type DocumentFilter struct {
 type DocumentRepository interface {
 	CreateWithArtifacts(ctx context.Context, document *models.HealthDocument, files []models.DocumentFile, ocrResults []models.OCRResult, analyses []models.AIAnalysis, reviewTasks []models.ReviewTask) error
 	FindByID(ctx context.Context, id uuid.UUID, userID uuid.UUID) (*models.HealthDocument, error)
+	FindByLegacyReport(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) (*models.HealthDocument, error)
 	List(ctx context.Context, filter DocumentFilter) ([]models.HealthDocument, int64, error)
 	CountOpenReviewTasks(ctx context.Context, documentID uuid.UUID) (int64, error)
+	ReplaceObservations(ctx context.Context, userID uuid.UUID, documentID uuid.UUID, observations []models.ExtractedObservation) error
 	ExistsForLegacyReport(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) (bool, error)
 	LegacyReportNeedsOCRRetry(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) (bool, error)
 	DeleteForLegacyReport(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) error
@@ -114,6 +116,24 @@ func (r *documentRepository) FindByID(ctx context.Context, id uuid.UUID, userID 
 	return &document, nil
 }
 
+func (r *documentRepository) FindByLegacyReport(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) (*models.HealthDocument, error) {
+	var document models.HealthDocument
+	err := r.db.WithContext(ctx).
+		Where("user_id = ? AND metadata ->> 'legacyReportId' = ?", userID, reportID.String()).
+		Preload("OCRResults", func(db *gorm.DB) *gorm.DB {
+			return db.Order("created_at DESC")
+		}).
+		Order("created_at DESC").
+		First(&document).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &document, nil
+}
+
 func (r *documentRepository) List(ctx context.Context, filter DocumentFilter) ([]models.HealthDocument, int64, error) {
 	query := r.db.WithContext(ctx).
 		Model(&models.HealthDocument{}).
@@ -167,6 +187,29 @@ func (r *documentRepository) CountOpenReviewTasks(ctx context.Context, documentI
 		Where("document_id = ? AND status = ?", documentID, "open").
 		Count(&count).Error
 	return count, err
+}
+
+func (r *documentRepository) ReplaceObservations(ctx context.Context, userID uuid.UUID, documentID uuid.UUID, observations []models.ExtractedObservation) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("user_id = ? AND document_id = ?", userID, documentID).Delete(&models.ExtractedObservation{}).Error; err != nil {
+			return err
+		}
+		if len(observations) == 0 {
+			return nil
+		}
+		for i := range observations {
+			observations[i].ID = uuid.Nil
+			observations[i].UserID = userID
+			observations[i].DocumentID = documentID
+			if len(observations[i].SourceBBoxJSON) == 0 {
+				observations[i].SourceBBoxJSON = []byte("{}")
+			}
+			if observations[i].ReviewStatus == "" {
+				observations[i].ReviewStatus = "pending"
+			}
+		}
+		return tx.Create(&observations).Error
+	})
 }
 
 func (r *documentRepository) ExistsForLegacyReport(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) (bool, error) {

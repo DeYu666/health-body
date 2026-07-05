@@ -13,10 +13,18 @@ import {
 import { useNavigate, useOutletContext } from 'react-router-dom'
 import { useAppState } from '../context/AppStateContext'
 import { useAuth } from '../context/AuthContext'
+import { getMetricLabel } from '../data/mockMetrics'
 import type { AppShellContextValue } from '../components/layout/AppShell'
 import type { MetricSeries } from '../types'
 
 const getLatestValue = (series?: MetricSeries) => series?.data[series.data.length - 1]
+
+const formatNumber = (value: number, metricType?: string) => {
+  if (metricType === 'weight') return value.toFixed(1)
+  if (Math.abs(value) < 1) return value.toFixed(3)
+  if (Math.abs(value) < 10) return value.toFixed(1)
+  return value.toFixed(0)
+}
 
 const formatMetricValue = (series?: MetricSeries) => {
   const latest = getLatestValue(series)
@@ -24,7 +32,7 @@ const formatMetricValue = (series?: MetricSeries) => {
   if (series?.metricType === 'blood-pressure') {
     return `${latest.value}/${latest.secondaryValue ?? '--'} ${series.unit}`
   }
-  return `${Number(latest.value).toFixed(series?.metricType === 'weight' ? 1 : 0)} ${series?.unit ?? ''}`
+  return `${formatNumber(Number(latest.value), series?.metricType)} ${series?.unit ?? ''}`.trim()
 }
 
 export const DashboardPage: React.FC = () => {
@@ -54,19 +62,10 @@ export const DashboardPage: React.FC = () => {
   )
 
   const quickMetrics = useMemo(() => {
-    const metricLabels: Record<string, string> = {
-      weight: '体重',
-      'blood-pressure': '血压',
-      'blood-sugar': '血糖',
-      'heart-rate': '心率',
-      temperature: '体温',
-      bmi: 'BMI',
-    }
-
     return metricSeries
       .map((series) => ({
         id: series.metricType,
-        label: metricLabels[series.metricType] ?? series.metricType,
+        label: getMetricLabel(series.metricType),
         value: formatMetricValue(series),
       }))
       .filter((metric) => metric.value)

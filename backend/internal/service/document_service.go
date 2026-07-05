@@ -124,11 +124,12 @@ type BackfillReportsInput struct {
 }
 
 type BackfillReportItemDTO struct {
-	ReportID   uuid.UUID  `json:"reportId"`
-	DocumentID *uuid.UUID `json:"documentId,omitempty"`
-	Title      string     `json:"title"`
-	Status     string     `json:"status"`
-	Error      string     `json:"error,omitempty"`
+	ReportID    uuid.UUID  `json:"reportId"`
+	DocumentID  *uuid.UUID `json:"documentId,omitempty"`
+	Title       string     `json:"title"`
+	Status      string     `json:"status"`
+	MetricCount int        `json:"metricCount,omitempty"`
+	Error       string     `json:"error,omitempty"`
 }
 
 type BackfillReportsDTO struct {
@@ -290,7 +291,7 @@ func (s *documentService) importDocument(ctx context.Context, userID uuid.UUID, 
 		}
 	}
 
-	if err := s.syncMetricsFromDocument(ctx, userID, document, input, firstNonEmpty(ocrRawText, noteOnlyRawText(input)), summary); err != nil {
+	if _, err := s.syncMetricsFromDocument(ctx, userID, document, input, firstNonEmpty(ocrRawText, noteOnlyRawText(input)), summary); err != nil {
 		return nil, err
 	}
 
@@ -334,6 +335,7 @@ func (s *documentService) BackfillReports(ctx context.Context, userID uuid.UUID,
 			ReportID: report.ID,
 			Title:    report.Title,
 		}
+		importInput := importInputFromReport(report)
 
 		exists, err := s.repo.ExistsForLegacyReport(ctx, userID, report.ID)
 		if err != nil {
@@ -361,8 +363,38 @@ func (s *documentService) BackfillReports(ctx context.Context, userID uuid.UUID,
 					continue
 				}
 			} else {
-				item.Status = "skipped"
-				result.Skipped++
+				document, err := s.repo.FindByLegacyReport(ctx, userID, report.ID)
+				if err != nil {
+					item.Status = "failed"
+					item.Error = err.Error()
+					result.Failed++
+					result.Items = append(result.Items, item)
+					continue
+				}
+				if document == nil {
+					item.Status = "skipped"
+					item.Error = "document_not_found"
+					result.Skipped++
+					result.Items = append(result.Items, item)
+					continue
+				}
+				added, err := s.syncMetricsFromDocument(ctx, userID, document, importInput, latestOCRRawText(document), document.Summary)
+				if err != nil {
+					item.Status = "failed"
+					item.Error = err.Error()
+					result.Failed++
+					result.Items = append(result.Items, item)
+					continue
+				}
+				item.DocumentID = &document.ID
+				item.MetricCount = added
+				if added > 0 {
+					item.Status = "synced"
+					result.Processed++
+				} else {
+					item.Status = "skipped"
+					result.Skipped++
+				}
 				result.Items = append(result.Items, item)
 				continue
 			}
@@ -372,7 +404,6 @@ func (s *documentService) BackfillReports(ctx context.Context, userID uuid.UUID,
 			item.Status = "retrying"
 		}
 
-		importInput := importInputFromReport(report)
 		if len(importInput.Files) == 0 && strings.TrimSpace(importInput.Note) == "" {
 			item.Status = "skipped"
 			item.Error = "empty_report"
@@ -397,6 +428,7 @@ func (s *documentService) BackfillReports(ctx context.Context, userID uuid.UUID,
 		}
 		item.Status = imported.Document.Status
 		item.DocumentID = &imported.Document.ID
+		item.MetricCount = 0
 		result.Processed++
 		result.Items = append(result.Items, item)
 	}
@@ -427,23 +459,68 @@ func (s *documentService) List(ctx context.Context, filter repository.DocumentFi
 	}, nil
 }
 
-func (s *documentService) syncMetricsFromDocument(ctx context.Context, userID uuid.UUID, document *models.HealthDocument, input ImportDocumentInput, rawText string, summary string) error {
-	if s.metricService == nil {
-		return nil
-	}
+func (s *documentService) syncMetricsFromDocument(ctx context.Context, userID uuid.UUID, document *models.HealthDocument, input ImportDocumentInput, rawText string, summary string) (int, error) {
 	observedAt := time.Now()
 	if document.DocumentDate != nil {
 		observedAt = *document.DocumentDate
 	}
 
 	sourceText := strings.Join([]string{rawText, input.Note, summary}, "\n")
+	observations := extractObservationModelsFromText(sourceText, observedAt)
+	if err := s.repo.ReplaceObservations(ctx, userID, document.ID, observations); err != nil {
+		return 0, err
+	}
+
+	if s.metricService == nil {
+		return 0, nil
+	}
 	metrics := extractMetricInputsFromText(sourceText, observedAt, document.Title, document.ID)
+	metrics = append(metrics, metricInputsFromObservations(observations, observedAt, document.Title, document.ID)...)
+	added := 0
 	for _, metric := range metrics {
+		exists, err := s.metricAlreadyLinked(ctx, userID, metric, document.ID)
+		if err != nil {
+			return added, err
+		}
+		if exists {
+			continue
+		}
 		if _, err := s.metricService.Create(ctx, userID, metric); err != nil {
-			return err
+			return added, err
+		}
+		added++
+	}
+	return added, nil
+}
+
+func (s *documentService) metricAlreadyLinked(ctx context.Context, userID uuid.UUID, metric CreateMetricInput, documentID uuid.UUID) (bool, error) {
+	start := metric.RecordedAt.Add(-time.Second)
+	end := metric.RecordedAt.Add(time.Second)
+	existing, err := s.metricService.List(ctx, repository.MetricFilter{
+		UserID:     userID,
+		MetricType: metric.MetricType,
+		StartDate:  &start,
+		EndDate:    &end,
+		Limit:      100,
+	})
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range existing {
+		if strings.Contains(entry.Notes, documentID.String()) {
+			return true, nil
 		}
 	}
-	return nil
+	return false, nil
+}
+
+func latestOCRRawText(document *models.HealthDocument) string {
+	for _, result := range document.OCRResults {
+		if text := strings.TrimSpace(result.RawText); text != "" {
+			return text
+		}
+	}
+	return ""
 }
 
 func (s *documentService) Get(ctx context.Context, userID uuid.UUID, documentID uuid.UUID) (*DocumentDTO, error) {
@@ -793,9 +870,130 @@ var (
 	bmiPattern           = regexp.MustCompile(`(?i)(?:BMI|体质指数)\s*[:：]?\s*(\d{1,2}(?:\.\d+)?)`)
 )
 
+type labObservationRule struct {
+	Name           string
+	NormalizedName string
+	Code           string
+	Unit           string
+	MetricType     string
+	ReferenceText  string
+	ValidateMin    float64
+	ValidateMax    float64
+	ReferenceLow   *float64
+	ReferenceHigh  *float64
+	Patterns       []*regexp.Regexp
+}
+
+var labObservationRules = []labObservationRule{
+	{
+		Name:           "肌酸激酶",
+		NormalizedName: "creatine_kinase",
+		Code:           "CK",
+		Unit:           "U/L",
+		MetricType:     "lab:creatine-kinase",
+		ReferenceText:  "成人常见参考范围约 24-174 U/L，不同医院可能不同",
+		ValidateMin:    1,
+		ValidateMax:    20000,
+		ReferenceLow:   floatPtr(24),
+		ReferenceHigh:  floatPtr(174),
+		Patterns: []*regexp.Regexp{
+			regexp.MustCompile(`(?i)肌酸激酶[^0-9]{0,24}(?:大于|人于|>|＞)?\s*(\d{1,5}(?:\.\d+)?)\s*(?:U\s*[/／]?\s*[Ll1I])?`),
+		},
+	},
+	{
+		Name:           "C反应蛋白",
+		NormalizedName: "c_reactive_protein",
+		Code:           "CRP",
+		Unit:           "mg/L",
+		MetricType:     "lab:c-reactive-protein",
+		ReferenceText:  "成人常见参考范围约 0-6 mg/L，不同医院可能不同",
+		ValidateMin:    0,
+		ValidateMax:    500,
+		ReferenceLow:   floatPtr(0),
+		ReferenceHigh:  floatPtr(6),
+		Patterns: []*regexp.Regexp{
+			regexp.MustCompile(`(?i)(?:C反应蛋白|CRP)[^0-9]{0,24}(?:显著升高|升高|结果为|结果)?\s*[\(（]?\s*(\d{1,4}(?:\.\d+)?)\s*mg\s*[/／]?\s*[Ll1I]`),
+		},
+	},
+	{
+		Name:           "中性粒细胞百分比",
+		NormalizedName: "neutrophil_percent",
+		Code:           "NEUT%",
+		Unit:           "%",
+		MetricType:     "lab:neutrophil-percent",
+		ReferenceText:  "成人常见参考范围约 40-75%，不同医院可能不同",
+		ValidateMin:    0,
+		ValidateMax:    100,
+		ReferenceLow:   floatPtr(40),
+		ReferenceHigh:  floatPtr(75),
+		Patterns: []*regexp.Regexp{
+			regexp.MustCompile(`(?i)(?:中性粒细胞百分比|嗜中性粒细胞百分比|NEUT%)[^0-9]{0,24}(?:升高|降低|偏高|偏低)?\s*[\(（]?\s*(\d{1,3}(?:\.\d+)?)\s*%`),
+		},
+	},
+	{
+		Name:           "淋巴细胞百分比",
+		NormalizedName: "lymphocyte_percent",
+		Code:           "LYMPH%",
+		Unit:           "%",
+		MetricType:     "lab:lymphocyte-percent",
+		ReferenceText:  "成人常见参考范围约 20-50%，不同医院可能不同",
+		ValidateMin:    0,
+		ValidateMax:    100,
+		ReferenceLow:   floatPtr(20),
+		ReferenceHigh:  floatPtr(50),
+		Patterns: []*regexp.Regexp{
+			regexp.MustCompile(`(?i)(?:淋巴细胞百分比|LYMPH%)[^0-9]{0,24}(?:升高|降低|偏高|偏低)?\s*[\(（]?\s*(\d{1,3}(?:\.\d+)?)\s*%`),
+		},
+	},
+	{
+		Name:           "肌钙蛋白TNI",
+		NormalizedName: "troponin_i",
+		Code:           "TNI",
+		Unit:           "ng/mL",
+		MetricType:     "lab:troponin-i",
+		ReferenceText:  "常见参考范围约 0-0.041 ng/mL，不同医院可能不同",
+		ValidateMin:    0,
+		ValidateMax:    100,
+		ReferenceLow:   floatPtr(0),
+		ReferenceHigh:  floatPtr(0.041),
+		Patterns: []*regexp.Regexp{
+			regexp.MustCompile(`(?i)(?:肌钙蛋白(?:[（(]?\s*TNI\s*[）)]?)?|TNI)[^0-9]{0,24}(?:结果为|结果)?\s*(\d(?:\.\d+)?)\s*ng\s*[/／]?\s*m[lL]`),
+		},
+	},
+	{
+		Name:           "尿比重",
+		NormalizedName: "urine_specific_gravity",
+		Code:           "USG",
+		Unit:           "",
+		MetricType:     "lab:urine-specific-gravity",
+		ReferenceText:  "常见参考范围约 1.003-1.030，不同医院可能不同",
+		ValidateMin:    1,
+		ValidateMax:    1.05,
+		ReferenceLow:   floatPtr(1.003),
+		ReferenceHigh:  floatPtr(1.030),
+		Patterns: []*regexp.Regexp{
+			regexp.MustCompile(`(?i)(?:尿比重|比重|SG)[^0-9]{0,12}(\d\.\d{3})`),
+		},
+	},
+	{
+		Name:           "尿pH",
+		NormalizedName: "urine_ph",
+		Code:           "UPH",
+		Unit:           "",
+		MetricType:     "lab:urine-ph",
+		ReferenceText:  "常见参考范围约 5.0-8.0，不同医院可能不同",
+		ValidateMin:    4,
+		ValidateMax:    9,
+		ReferenceLow:   floatPtr(5),
+		ReferenceHigh:  floatPtr(8),
+		Patterns: []*regexp.Regexp{
+			regexp.MustCompile(`(?i)(?:尿pH|pH|PH|pll)[^0-9]{0,12}(\d(?:\.\d+)?)`),
+		},
+	},
+}
+
 func extractMetricInputsFromText(text string, recordedAt time.Time, documentTitle string, documentID uuid.UUID) []CreateMetricInput {
-	cleaned := strings.ReplaceAll(text, "／", "/")
-	cleaned = strings.ReplaceAll(cleaned, "：", ":")
+	cleaned := normalizeMetricText(text)
 	notes := "OCR/AI 来源：" + documentTitle + " #" + documentID.String()
 	metrics := make([]CreateMetricInput, 0, 4)
 	seen := map[string]struct{}{}
@@ -830,6 +1028,135 @@ func extractMetricInputsFromText(text string, recordedAt time.Time, documentTitl
 	addNumberMetric(cleaned, bmiPattern, "bmi", "", recordedAt, notes, 10, 60, add)
 
 	return metrics
+}
+
+func extractObservationModelsFromText(text string, observedAt time.Time) []models.ExtractedObservation {
+	cleaned := normalizeMetricText(text)
+	if strings.TrimSpace(cleaned) == "" {
+		return nil
+	}
+
+	observedAtCopy := observedAt
+	observations := make([]models.ExtractedObservation, 0, len(labObservationRules))
+	seen := map[string]struct{}{}
+	confidence := 0.68
+	for _, rule := range labObservationRules {
+		value, ok := firstLabRuleValue(cleaned, rule)
+		if !ok {
+			continue
+		}
+		key := rule.MetricType
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		valueCopy := value
+		observations = append(observations, models.ExtractedObservation{
+			Name:           rule.Name,
+			NormalizedName: rule.NormalizedName,
+			CodeSystem:     "local",
+			Code:           rule.Code,
+			ValueNumber:    &valueCopy,
+			ValueText:      strconv.FormatFloat(value, 'f', -1, 64),
+			Unit:           rule.Unit,
+			ReferenceLow:   rule.ReferenceLow,
+			ReferenceHigh:  rule.ReferenceHigh,
+			ReferenceText:  rule.ReferenceText,
+			AbnormalFlag:   abnormalFlag(value, rule.ReferenceLow, rule.ReferenceHigh),
+			ObservedAt:     &observedAtCopy,
+			SourceBBoxJSON: datatypes.JSON([]byte("{}")),
+			Confidence:     &confidence,
+			ReviewStatus:   "pending",
+		})
+	}
+	return observations
+}
+
+func metricInputsFromObservations(observations []models.ExtractedObservation, recordedAt time.Time, documentTitle string, documentID uuid.UUID) []CreateMetricInput {
+	if len(observations) == 0 {
+		return nil
+	}
+	notesPrefix := "OCR/AI 来源：" + documentTitle + " #" + documentID.String()
+	metrics := make([]CreateMetricInput, 0, len(observations))
+	seen := map[string]struct{}{}
+	for _, observation := range observations {
+		if observation.ValueNumber == nil {
+			continue
+		}
+		metricType := labMetricType(observation.NormalizedName)
+		if metricType == "" {
+			continue
+		}
+		if _, ok := seen[metricType]; ok {
+			continue
+		}
+		seen[metricType] = struct{}{}
+		metrics = append(metrics, CreateMetricInput{
+			MetricType:   metricType,
+			PrimaryValue: *observation.ValueNumber,
+			Unit:         observation.Unit,
+			RecordedAt:   recordedAt,
+			Notes:        notesPrefix + "；项目：" + observation.Name,
+		})
+	}
+	return metrics
+}
+
+func labMetricType(normalizedName string) string {
+	for _, rule := range labObservationRules {
+		if rule.NormalizedName == normalizedName {
+			return rule.MetricType
+		}
+	}
+	return ""
+}
+
+func firstLabRuleValue(text string, rule labObservationRule) (float64, bool) {
+	for _, pattern := range rule.Patterns {
+		match := pattern.FindStringSubmatch(text)
+		if len(match) < 2 {
+			continue
+		}
+		value, err := strconv.ParseFloat(match[1], 64)
+		if err != nil {
+			continue
+		}
+		if value < rule.ValidateMin || value > rule.ValidateMax {
+			continue
+		}
+		return value, true
+	}
+	return 0, false
+}
+
+func abnormalFlag(value float64, low *float64, high *float64) string {
+	if low != nil && value < *low {
+		return "low"
+	}
+	if high != nil && value > *high {
+		return "high"
+	}
+	return "normal"
+}
+
+func normalizeMetricText(text string) string {
+	replacer := strings.NewReplacer(
+		"／", "/",
+		"：", ":",
+		"（", "(",
+		"）", ")",
+		"ｍ", "m",
+		"ｇ", "g",
+		"Ｌ", "L",
+		"ｌ", "l",
+		"Ⅰ", "I",
+		"升商", "升高",
+	)
+	return replacer.Replace(text)
+}
+
+func floatPtr(value float64) *float64 {
+	return &value
 }
 
 func firstRegexMatch(text string, patterns ...*regexp.Regexp) []string {

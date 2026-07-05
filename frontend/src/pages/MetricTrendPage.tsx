@@ -8,11 +8,11 @@ import type { AppShellContextValue } from '../components/layout/AppShell'
 import { useAppState } from '../context/AppStateContext'
 import { baseLineOptions } from '../lib/chartConfig'
 import type { MetricSeries, MetricType } from '../types'
-import { metricLabels } from '../data/mockMetrics'
+import { getMetricLabel, metricLabels } from '../data/mockMetrics'
 
 type TimeRange = 'day' | 'week' | 'month' | 'year'
 
-const metricTabs: { value: MetricType; label: string }[] = [
+const defaultMetricTabs: { value: MetricType; label: string }[] = [
   { value: 'weight', label: '体重' },
   { value: 'blood-pressure', label: '血压' },
   { value: 'blood-sugar', label: '血糖' },
@@ -26,6 +26,13 @@ const rangeOptions: { value: TimeRange; label: string }[] = [
   { value: 'month', label: '月' },
   { value: 'year', label: '年' },
 ]
+
+const formatTrendValue = (value: number, metricType?: string) => {
+  if (metricType === 'weight') return value.toFixed(1)
+  if (Math.abs(value) < 1) return value.toFixed(3)
+  if (Math.abs(value) < 10) return value.toFixed(1)
+  return value.toFixed(0)
+}
 
 const getSummary = (series?: MetricSeries) => {
   if (!series || series.data.length === 0) {
@@ -43,11 +50,11 @@ const getSummary = (series?: MetricSeries) => {
   const max = Math.max(...values)
   const avg = values.reduce((sum, value) => sum + value, 0) / values.length
   return {
-    current: currentValue.toFixed(1),
+    current: formatTrendValue(currentValue, series.metricType),
     unit: series.unit,
-    min: min.toFixed(1),
-    max: max.toFixed(1),
-    avg: avg.toFixed(1),
+    min: formatTrendValue(min, series.metricType),
+    max: formatTrendValue(max, series.metricType),
+    avg: formatTrendValue(avg, series.metricType),
   }
 }
 
@@ -70,6 +77,23 @@ export const MetricTrendPage: React.FC = () => {
     return map
   }, [metricSeries])
 
+  const metricTabs = useMemo(() => {
+    const defaultTypes = new Set(defaultMetricTabs.map((tab) => tab.value))
+    const dynamicTabs = metricSeries
+      .filter((series) => series.data.length > 0 && !defaultTypes.has(series.metricType))
+      .map((series) => ({
+        value: series.metricType,
+        label: getMetricLabel(series.metricType),
+      }))
+    return [...defaultMetricTabs, ...dynamicTabs]
+  }, [metricSeries])
+
+  useEffect(() => {
+    if (metricSeries.length > 0 && !seriesMap.has(activeMetric)) {
+      setActiveMetric(metricSeries[0].metricType)
+    }
+  }, [activeMetric, metricSeries, seriesMap])
+
   const activeSeries = seriesMap.get(activeMetric)
   const summary = getSummary(activeSeries)
 
@@ -79,7 +103,7 @@ export const MetricTrendPage: React.FC = () => {
       labels: activeSeries.data.map((point) => dayjs(point.recordedAt).format('MM-DD')),
       datasets: [
         {
-          label: metricLabels[activeSeries.metricType]?.label ?? '指标',
+          label: getMetricLabel(activeSeries.metricType),
           data: activeSeries.data.map((point) => point.value),
           borderColor: '#3b82f6',
           backgroundColor: 'rgba(59, 130, 246, 0.15)',
@@ -211,7 +235,7 @@ export const MetricTrendPage: React.FC = () => {
               <span className="ml-1 text-base text-slate-400">{summary.unit}</span>
             </p>
             <p className="mt-2 text-xs text-slate-400">
-              {metricLabels[activeMetric]?.description}
+              {metricLabels[activeMetric]?.description ?? '来自报告抽取、设备同步或手动补录的趋势数据。'}
             </p>
           </div>
           <div className="rounded-xl bg-white px-4 py-3 text-xs text-slate-500 shadow-inner">

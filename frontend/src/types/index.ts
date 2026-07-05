@@ -15,13 +15,7 @@ export interface Report {
   updatedAt: string
 }
 
-export type MetricType =
-  | 'weight'
-  | 'blood-pressure'
-  | 'blood-sugar'
-  | 'heart-rate'
-  | 'temperature'
-  | 'bmi'
+export type MetricType = string
 
 export interface MetricEntry {
   id: string
@@ -72,4 +66,3 @@ export interface ReportFile {
   previewUrl?: string
   displayOrder: number
 }
-
