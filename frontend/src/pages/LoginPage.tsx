@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { FaFingerprint, FaHeartbeat, FaKey, FaShieldAlt, FaSignInAlt } from 'react-icons/fa'
+import { FaHeartbeat, FaShieldAlt, FaSignInAlt } from 'react-icons/fa'
 import type { FormEvent } from 'react'
 import { useAuth } from '../context/AuthContext'
 
 export const LoginPage: React.FC = () => {
-  const { login, isPinEnabled } = useAuth()
+  const { login } = useAuth()
   const navigate = useNavigate()
   const [email, setEmail] = useState('demo@example.com')
   const [password, setPassword] = useState('demo1234')
@@ -28,18 +28,18 @@ export const LoginPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-hero px-4 py-8">
-      <div className="mx-auto flex w-full max-w-md flex-col items-center justify-center gap-8 rounded-[32px] bg-white/5 p-6 text-white shadow-card backdrop-blur">
+      <div className="mx-auto flex w-full max-w-md flex-col items-center justify-center gap-8 rounded-2xl border border-slate-200 bg-white p-6 text-slate-900 shadow-card">
         <div className="text-center">
-          <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-3xl bg-white/20 shadow-inner">
-            <FaHeartbeat className="text-4xl text-white" />
+          <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-2xl bg-primary/10 shadow-inner">
+            <FaHeartbeat className="text-4xl text-primary" />
           </div>
           <h1 className="text-3xl font-semibold">健康档案</h1>
-          <p className="mt-2 text-sm text-white/80">安全、私密的个人健康数据管理中心</p>
+          <p className="mt-2 text-sm text-slate-500">安全、私密的个人健康数据管理中心</p>
         </div>
 
         <form
           onSubmit={handleSubmit}
-          className="w-full space-y-4 rounded-3xl bg-white/95 p-6 text-slate-900 shadow-card"
+          className="w-full space-y-4 rounded-2xl bg-slate-50 p-6 text-slate-900"
         >
           <div>
             <label className="text-sm font-semibold text-slate-700">邮箱地址</label>
@@ -82,51 +82,22 @@ export const LoginPage: React.FC = () => {
           </button>
         </form>
 
-        <div className="text-sm text-white/80">或使用更快捷的安全方式</div>
-
-        <div className="w-full space-y-4 rounded-3xl bg-white/95 p-6 text-slate-900 shadow-card">
-          <div className="text-center">
-            <h3 className="text-base font-semibold">PWA 快速验证</h3>
-            <p className="mt-1 text-xs text-slate-500">使用 PIN 码或生物识别快速登录</p>
-          </div>
-
-          {isPinEnabled ? (
-            <button
-              onClick={() => {
-                if (email) {
-                  localStorage.setItem('last_email', email)
-                  navigate('/pin', { state: { email } })
-                } else {
-                  navigate('/pin')
-                }
-              }}
-              className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-primary hover:text-primary"
-            >
-              <FaKey />
-              PIN 码登录
-            </button>
-          ) : null}
-
-          <button
-            type="button"
-            className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-primary hover:text-primary"
-          >
-            <FaFingerprint />
-            面容 ID / 指纹
-          </button>
-
+        <div className="w-full rounded-2xl bg-slate-50 p-6 text-slate-900">
           <div className="flex items-center justify-center gap-2 rounded-full bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-700">
             <FaShieldAlt />
             数据采用 AES-256 加密存储
           </div>
+          <p className="mt-3 text-center text-xs text-slate-400">
+            PIN 与生物识别会在本机解锁流程补全后开放。
+          </p>
         </div>
 
         <div className="text-center">
-          <p className="text-sm text-white/80">
+          <p className="text-sm text-slate-500">
             还没有账号？{' '}
             <Link
               to="/register"
-              className="font-semibold text-white underline hover:text-white/90"
+              className="font-semibold text-primary underline hover:text-primary-dark"
             >
               立即注册
             </Link>
@@ -136,4 +107,3 @@ export const LoginPage: React.FC = () => {
     </div>
   )
 }
-

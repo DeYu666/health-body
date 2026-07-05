@@ -1,7 +1,7 @@
 import clsx from 'classnames'
 import dayjs from 'dayjs'
 import { useEffect, useState } from 'react'
-import { FaInfoCircle, FaSave } from 'react-icons/fa'
+import { FaBrain, FaInfoCircle, FaMagic, FaSave } from 'react-icons/fa'
 import { useNavigate, useOutletContext } from 'react-router-dom'
 import type { ChangeEvent, FormEvent } from 'react'
 import type { AppShellContextValue } from '../components/layout/AppShell'
@@ -32,17 +32,68 @@ export const MetricEntryPage: React.FC = () => {
   const [secondaryValue, setSecondaryValue] = useState('')
   const [recordTime, setRecordTime] = useState(dayjs().format('YYYY-MM-DDTHH:mm'))
   const [notes, setNotes] = useState('')
+  const [smartText, setSmartText] = useState('')
   const [status, setStatus] = useState<'idle' | 'saving' | 'success'>('idle')
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     setHeaderConfig({
-      title: '录入指标',
+      title: 'AI 记录指标',
       showBackButton: true,
     })
   }, [setHeaderConfig])
 
   const currentOption = metricOptions.find((option) => option.value === type)!
+
+  const applySmartText = () => {
+    const text = smartText.trim()
+    if (!text) {
+      setError('请先输入一句健康记录')
+      return
+    }
+
+    const normalized = text.replace(/\s+/g, ' ')
+    const numberPattern = /(\d+(?:\.\d+)?)/
+    const bloodPressureMatch = normalized.match(/(?:血压|bp)[^\d]*(\d{2,3})\s*[/／]\s*(\d{2,3})/i)
+
+    if (bloodPressureMatch) {
+      setType('blood-pressure')
+      setPrimaryValue(bloodPressureMatch[1])
+      setSecondaryValue(bloodPressureMatch[2])
+    } else if (/血糖|葡萄糖|glucose|glu/i.test(normalized)) {
+      setType('blood-sugar')
+      setPrimaryValue(normalized.match(numberPattern)?.[1] ?? '')
+      setSecondaryValue('')
+    } else if (/体重|weight/i.test(normalized)) {
+      setType('weight')
+      setPrimaryValue(normalized.match(numberPattern)?.[1] ?? '')
+      setSecondaryValue('')
+    } else if (/心率|脉搏|heart/i.test(normalized)) {
+      setType('heart-rate')
+      setPrimaryValue(normalized.match(numberPattern)?.[1] ?? '')
+      setSecondaryValue('')
+    } else if (/体温|temperature/i.test(normalized)) {
+      setType('temperature')
+      setPrimaryValue(normalized.match(numberPattern)?.[1] ?? '')
+      setSecondaryValue('')
+    } else if (/bmi/i.test(normalized)) {
+      setType('bmi')
+      setPrimaryValue(normalized.match(numberPattern)?.[1] ?? '')
+      setSecondaryValue('')
+    } else {
+      setError('暂时无法识别指标类型，请手动选择后保存')
+      setNotes((prev) => (prev ? `${prev}\n${text}` : text))
+      return
+    }
+
+    if (/昨天/.test(normalized)) {
+      setRecordTime(dayjs().subtract(1, 'day').format('YYYY-MM-DDTHH:mm'))
+    } else {
+      setRecordTime(dayjs().format('YYYY-MM-DDTHH:mm'))
+    }
+    setNotes((prev) => (prev ? `${prev}\n${text}` : text))
+    setError(null)
+  }
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -89,6 +140,35 @@ export const MetricEntryPage: React.FC = () => {
           </p>
         </div>
       </div>
+
+      <section className="space-y-3 rounded-2xl bg-slate-50 p-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <FaBrain />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-slate-800">一句话记录</h2>
+            <p className="mt-1 text-xs text-slate-400">
+              先让系统预填，确认后再保存。后续可替换为 AI 解析接口。
+            </p>
+          </div>
+        </div>
+        <textarea
+          value={smartText}
+          onChange={(event) => setSmartText(event.target.value)}
+          rows={3}
+          placeholder="例如：今天早上血压 125/82；昨天饭后血糖 7.2；体重 72.4"
+          className="w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+        />
+        <button
+          type="button"
+          onClick={applySmartText}
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-primary/20 bg-primary/10 px-4 py-3 text-sm font-semibold text-primary transition hover:bg-primary hover:text-white"
+        >
+          <FaMagic />
+          智能预填
+        </button>
+      </section>
 
       <form onSubmit={handleSubmit} className="space-y-5">
         <section className="space-y-4 rounded-2xl bg-slate-50 p-4">
@@ -199,4 +279,3 @@ export const MetricEntryPage: React.FC = () => {
     </div>
   )
 }
-

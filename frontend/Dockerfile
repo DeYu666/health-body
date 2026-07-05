@@ -1,12 +1,17 @@
-# 使用 Caddy 官方 Alpine 镜像
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+ARG VITE_API_BASE_URL=http://localhost:8080/api/v1
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+RUN npm run build
+
 FROM caddy:2-alpine
 
-# 拷贝前端构建产物
-COPY dist /usr/share/caddy
+COPY --from=builder /app/dist /usr/share/caddy
 
-# 拷贝 Caddy 配置文件
 COPY Caddyfile /etc/caddy/Caddyfile
 
 EXPOSE 3000
-
-# 默认 ENTRYPOINT 就是 caddy run

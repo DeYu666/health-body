@@ -43,18 +43,18 @@ export const RegisterPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-hero px-4 py-8">
-      <div className="mx-auto flex w-full max-w-md flex-col items-center justify-center gap-8 rounded-[32px] bg-white/5 p-6 text-white shadow-card backdrop-blur">
+      <div className="mx-auto flex w-full max-w-md flex-col items-center justify-center gap-8 rounded-2xl border border-slate-200 bg-white p-6 text-slate-900 shadow-card">
         <div className="text-center">
-          <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-3xl bg-white/20 shadow-inner">
-            <FaHeartbeat className="text-4xl text-white" />
+          <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-2xl bg-primary/10 shadow-inner">
+            <FaHeartbeat className="text-4xl text-primary" />
           </div>
           <h1 className="text-3xl font-semibold">创建账号</h1>
-          <p className="mt-2 text-sm text-white/80">注册您的健康档案账号</p>
+          <p className="mt-2 text-sm text-slate-500">注册您的健康档案账号</p>
         </div>
 
         <form
           onSubmit={handleSubmit}
-          className="w-full space-y-4 rounded-3xl bg-white/95 p-6 text-slate-900 shadow-card"
+          className="w-full space-y-4 rounded-2xl bg-slate-50 p-6 text-slate-900"
         >
           <div>
             <label className="text-sm font-semibold text-slate-700">姓名</label>
@@ -128,11 +128,11 @@ export const RegisterPage: React.FC = () => {
         </div>
 
         <div className="text-center">
-          <p className="text-sm text-white/80">
+          <p className="text-sm text-slate-500">
             已有账号？{' '}
             <Link
               to="/login"
-              className="font-semibold text-white underline hover:text-white/90"
+              className="font-semibold text-primary underline hover:text-primary-dark"
             >
               立即登录
             </Link>
@@ -142,4 +142,3 @@ export const RegisterPage: React.FC = () => {
     </div>
   )
 }
-

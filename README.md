@@ -2,12 +2,14 @@
 
 This repository hosts a mobile-first personal health record (PHR) web application. It contains a React front-end that mirrors the high-fidelity prototype you provided, along with a Go (Gin) backend backed by PostgreSQL for secure data storage and aggregation.
 
+> AI-native product redesign: see [`docs/ai-native-business-design.md`](docs/ai-native-business-design.md).
+
 ### Key Capabilities
 
-- **Authentication flows** – email + password, PIN code shortcut, and placeholder biometric entry points.
-- **Report lifecycle** – upload (drag & drop or file select), tagging, remarks, encrypted storage badge, preview, share link placeholder, delete.
-- **Archive search** – filter by tag/hospital/date, switch between timeline and card views, keyword search.
-- **Metric capture & trends** – log weight, blood pressure, blood sugar and more; view trend charts with alerts for anomalies.
+- **Authentication flows** – email + password login and registration. PIN entry is hidden until the full local unlock flow is implemented.
+- **AI-native import flow** – import photos, PDFs, or a natural-language health note with an OCR/AI-ready processing path.
+- **Health document archive** – browse imported materials by category, timeline, source, and search.
+- **Metric capture & trends** – log weight, blood pressure, blood sugar and more; natural-language prefill reduces manual entry.
 - **Mobile-first UI** – bottom navigation, status bar, and interaction microcopy ported from the provided prototype while remaining responsive on desktop.
 
 ---
@@ -39,7 +41,7 @@ npm run dev                     # starts on http://localhost:5173
 - **已接入后端 API**：前端现在使用真实的后端 API，不再使用 mock 数据。
 - Charts are powered by `react-chartjs-2` with time-series adapters.
 - Mobile layout is the primary experience; desktop adds an enhanced sidebar.
-- Demo credentials: `demo@example.com / demo1234` or PIN `123456`.
+- Demo credentials: `demo@example.com / demo1234`.
 - **多文件上传**：支持一个报告上传多个文件，并显示上传进度。
 - **报告编辑**：支持修改报告的标题、医院、日期、标签和备注。
 
@@ -69,7 +71,7 @@ go run ./cmd/server
 ```
 
 - Auto-migrates schema on start (使用 GORM AutoMigrate).
-- Seeds a demo user (`demo@example.com / demo1234`, PIN `123456`) matching the UI.
+- Seeds a demo user (`demo@example.com / demo1234`) matching the UI.
 - JWT 认证：使用 JWT token 进行身份验证，支持 Bearer token 和 `X-User-ID` header。
 - 文件上传：集成七牛云存储，支持上传到 Qiniu Cloud。
 
@@ -92,7 +94,7 @@ Services:
 |----------------------------------|-----------------------------------------------|
 | `POST /api/v1/auth/register`    | User registration                             |
 | `POST /api/v1/auth/login`        | Email + password login                        |
-| `POST /api/v1/auth/pin`          | PIN-based login                               |
+| `POST /api/v1/auth/pin`          | PIN-based login endpoint (frontend entry hidden until setup flow exists) |
 | `GET  /api/v1/reports`           | List reports (supports search, tag, hospital) |
 | `GET  /api/v1/reports/hospitals` | List all hospitals used by user               |
 | `POST /api/v1/reports`           | Create a report metadata record               |
@@ -224,6 +226,9 @@ This project is provided as-is for implementation reference. Update licensing te
    - 创建 `user_tags` 表
    - 自动从现有报告的 tags 字段提取所有标签并创建用户级别标签
    - **状态**：迁移脚本已准备，后端 API 待实现
+4. **`004_add_ai_native_documents.sql`** - AI-native 健康资料处理底座
+   - 创建 `health_documents`, `document_files`, `ocr_results`, `extracted_observations`, `ai_analyses`, `review_tasks`
+   - 支持原始资料、OCR 结果、AI 分析、结构化指标和用户确认任务分层存储
 
 ### 运行数据库迁移
 
@@ -237,6 +242,7 @@ psql -U postgres -d your_database_name
 \i backend/migrations/001_init.sql
 \i backend/migrations/002_add_report_files.sql
 \i backend/migrations/003_add_user_tags.sql
+\i backend/migrations/004_add_ai_native_documents.sql
 ```
 
 或者使用 Go 的数据库迁移工具（如 golang-migrate）来管理这些迁移。

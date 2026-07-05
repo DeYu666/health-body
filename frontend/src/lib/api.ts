@@ -2,6 +2,7 @@ import type {
   MetricEntry,
   MetricSeries,
   Report,
+  ReportFile,
   UploadPayload,
 } from '../types'
 
@@ -132,10 +133,26 @@ class ApiClient {
       headers['X-User-ID'] = userID
     }
 
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-      ...options,
-      headers,
-    })
+    const url = `${API_BASE_URL}${endpoint}`
+    let response: Response
+    try {
+      response = await fetch(url, {
+        ...options,
+        headers,
+      })
+    } catch (err) {
+      // 浏览器在 CORS 失败、网络不可达等情况下会抛 TypeError，默认文案多为 Failed to fetch
+      const hint =
+        typeof window !== 'undefined' && window.location?.origin
+          ? `当前页面来源为 ${window.location.origin}，请确认后端 CORS_ALLOWED_ORIGINS 包含该地址，且 API 地址 ${API_BASE_URL} 可访问。`
+          : `请确认后端 CORS 配置与 API 地址 ${API_BASE_URL} 正确。`
+      if (err instanceof TypeError) {
+        throw new Error(`网络请求失败：${err.message}。${hint}`)
+      }
+      throw err instanceof Error
+        ? new Error(`${err.message}。${hint}`)
+        : new Error(`网络请求失败。${hint}`)
+    }
 
     if (!response.ok) {
       const error: ApiError = await response.json().catch(() => ({

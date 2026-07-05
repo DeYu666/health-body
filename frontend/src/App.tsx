@@ -8,7 +8,6 @@ import { DashboardPage } from './pages/DashboardPage'
 import { LoginPage } from './pages/LoginPage'
 import { MetricEntryPage } from './pages/MetricEntryPage'
 import { MetricTrendPage } from './pages/MetricTrendPage'
-import { PinPage } from './pages/PinPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { ReportDetailPage } from './pages/ReportDetailPage'
 import { UploadPage } from './pages/UploadPage'
@@ -20,13 +19,14 @@ const AppRoutes = () => {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
-      <Route path="/pin" element={<PinPage />} />
+      <Route path="/pin" element={<Navigate to="/login" replace />} />
 
       <Route element={<ProtectedRoute />}>
         <Route element={<AppShell />}>
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/archive" element={<ArchivePage />} />
-          <Route path="/upload" element={<UploadPage />} />
+          <Route path="/import" element={<UploadPage />} />
+          <Route path="/upload" element={<Navigate to="/import" replace />} />
           <Route path="/metrics/new" element={<MetricEntryPage />} />
           <Route path="/metrics/trends" element={<MetricTrendPage />} />
           <Route path="/reports/:reportId" element={<ReportDetailPage />} />

@@ -28,10 +28,9 @@ export default {
         xl: '22px',
       },
       backgroundImage: {
-        'gradient-hero': 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        'gradient-hero': 'linear-gradient(180deg, #f8fafc 0%, #eef6ff 48%, #f8fafc 100%)',
       },
     },
   },
   plugins: [require('@tailwindcss/forms')],
 }
-

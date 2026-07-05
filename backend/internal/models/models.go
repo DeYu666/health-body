@@ -80,3 +80,96 @@ type MetricEntry struct {
 	RecordedAt     time.Time `json:"recordedAt" gorm:"index"`
 	Notes          string    `json:"notes" gorm:"type:text"`
 }
+
+type HealthDocument struct {
+	BaseModel
+	UserID       uuid.UUID      `json:"userId" gorm:"type:uuid;index"`
+	Title        string         `json:"title" gorm:"size:200;not null"`
+	Category     string         `json:"category" gorm:"size:64;index"`
+	Subcategory  string         `json:"subcategory" gorm:"size:64;index"`
+	SourceType   string         `json:"sourceType" gorm:"size:32;index"`
+	Status       string         `json:"status" gorm:"size:32;index;default:'uploaded'"`
+	Organization string         `json:"organization" gorm:"size:160"`
+	Department   string         `json:"department" gorm:"size:120"`
+	DocumentDate *time.Time     `json:"documentDate" gorm:"index"`
+	Summary      string         `json:"summary" gorm:"type:text"`
+	AIConclusion string         `json:"aiConclusion" gorm:"type:text"`
+	Confidence   *float64       `json:"confidence"`
+	Metadata     datatypes.JSON `json:"metadata" gorm:"type:jsonb"`
+	Files        []DocumentFile `json:"files" gorm:"foreignKey:DocumentID"`
+	OCRResults   []OCRResult    `json:"ocrResults" gorm:"foreignKey:DocumentID"`
+	Analyses     []AIAnalysis   `json:"analyses" gorm:"foreignKey:DocumentID"`
+}
+
+type DocumentFile struct {
+	BaseModel
+	DocumentID   uuid.UUID `json:"documentId" gorm:"type:uuid;index"`
+	FileURL      string    `json:"fileUrl" gorm:"size:512;not null"`
+	PreviewURL   string    `json:"previewUrl" gorm:"size:512"`
+	MimeType     string    `json:"mimeType" gorm:"size:120"`
+	FileSize     int64     `json:"fileSize"`
+	PageCount    int       `json:"pageCount"`
+	SHA256       string    `json:"sha256" gorm:"size:64;index"`
+	DisplayOrder int       `json:"displayOrder" gorm:"default:0"`
+}
+
+type OCRResult struct {
+	BaseModel
+	DocumentID    uuid.UUID      `json:"documentId" gorm:"type:uuid;index"`
+	Provider      string         `json:"provider" gorm:"size:64"`
+	RawText       string         `json:"rawText" gorm:"type:text"`
+	PagesJSON     datatypes.JSON `json:"pagesJson" gorm:"type:jsonb"`
+	TablesJSON    datatypes.JSON `json:"tablesJson" gorm:"type:jsonb"`
+	KeyValuesJSON datatypes.JSON `json:"keyValuesJson" gorm:"type:jsonb"`
+	Confidence    *float64       `json:"confidence"`
+}
+
+type ExtractedObservation struct {
+	BaseModel
+	UserID         uuid.UUID      `json:"userId" gorm:"type:uuid;index"`
+	DocumentID     uuid.UUID      `json:"documentId" gorm:"type:uuid;index"`
+	Name           string         `json:"name" gorm:"size:160;not null"`
+	NormalizedName string         `json:"normalizedName" gorm:"size:160;index"`
+	CodeSystem     string         `json:"codeSystem" gorm:"size:64"`
+	Code           string         `json:"code" gorm:"size:64;index"`
+	ValueNumber    *float64       `json:"valueNumber"`
+	ValueText      string         `json:"valueText" gorm:"size:200"`
+	Unit           string         `json:"unit" gorm:"size:32"`
+	ReferenceLow   *float64       `json:"referenceLow"`
+	ReferenceHigh  *float64       `json:"referenceHigh"`
+	ReferenceText  string         `json:"referenceText" gorm:"size:160"`
+	AbnormalFlag   string         `json:"abnormalFlag" gorm:"size:32;index"`
+	ObservedAt     *time.Time     `json:"observedAt" gorm:"index"`
+	SourcePage     int            `json:"sourcePage"`
+	SourceBBoxJSON datatypes.JSON `json:"sourceBBoxJson" gorm:"type:jsonb"`
+	Confidence     *float64       `json:"confidence"`
+	ReviewStatus   string         `json:"reviewStatus" gorm:"size:32;index;default:'pending'"`
+}
+
+type AIAnalysis struct {
+	BaseModel
+	DocumentID          uuid.UUID      `json:"documentId" gorm:"type:uuid;index"`
+	Model               string         `json:"model" gorm:"size:120"`
+	AnalysisType        string         `json:"analysisType" gorm:"size:64;index"`
+	Summary             string         `json:"summary" gorm:"type:text"`
+	FindingsJSON        datatypes.JSON `json:"findingsJson" gorm:"type:jsonb"`
+	RisksJSON           datatypes.JSON `json:"risksJson" gorm:"type:jsonb"`
+	RecommendationsJSON datatypes.JSON `json:"recommendationsJson" gorm:"type:jsonb"`
+	CitationsJSON       datatypes.JSON `json:"citationsJson" gorm:"type:jsonb"`
+	Confidence          *float64       `json:"confidence"`
+}
+
+type ReviewTask struct {
+	BaseModel
+	UserID         uuid.UUID      `json:"userId" gorm:"type:uuid;index"`
+	DocumentID     uuid.UUID      `json:"documentId" gorm:"type:uuid;index"`
+	TaskType       string         `json:"taskType" gorm:"size:64;index"`
+	FieldName      string         `json:"fieldName" gorm:"size:120"`
+	SuggestedValue string         `json:"suggestedValue" gorm:"type:text"`
+	SourcePage     int            `json:"sourcePage"`
+	SourceBBoxJSON datatypes.JSON `json:"sourceBBoxJson" gorm:"type:jsonb"`
+	Confidence     *float64       `json:"confidence"`
+	Status         string         `json:"status" gorm:"size:32;index;default:'open'"`
+	ResolvedValue  string         `json:"resolvedValue" gorm:"type:text"`
+	ResolvedAt     *time.Time     `json:"resolvedAt"`
+}

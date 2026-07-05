@@ -73,7 +73,7 @@ func Load() *Config {
 		Env:     getEnv("APP_ENV", "development"),
 		HTTP: HTTPConfig{
 			Port:           getEnv("PORT", "8080"),
-			AllowedOrigins: splitAndClean(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:4173")),
+			AllowedOrigins: splitAndClean(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:4173,http://localhost:3000,http://localhost:3001")),
 		},
 		DB: DatabaseConfig{
 			URL:            getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/phr?sslmode=disable"),

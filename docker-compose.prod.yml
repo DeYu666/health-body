@@ -1,0 +1,32 @@
+services:
+  phr-backend:
+    image: health-body-backend:local
+    build:
+      context: ./backend
+    container_name: phr-backend
+    restart: unless-stopped
+    env_file:
+      - ./.env.production
+    ports:
+      - "8080:8080"
+    networks:
+      - immich_default
+
+  phr-frontend:
+    image: health-body-frontend:local
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://192.168.0.111:8080/api/v1}
+    container_name: phr-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - phr-backend
+    networks:
+      - immich_default
+
+networks:
+  immich_default:
+    external: true

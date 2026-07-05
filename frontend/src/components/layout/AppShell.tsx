@@ -31,9 +31,9 @@ export const navItems = [
     icon: HiMiniChartBar,
   },
   {
-    label: '上传',
-    subLabel: '拍照或拖拽导入',
-    path: '/upload',
+    label: '导入',
+    subLabel: '拍照上传与 AI 整理',
+    path: '/import',
     icon: HiMiniPlusCircle,
   },
 ]
@@ -57,7 +57,7 @@ export const AppShell: React.FC = () => {
   )
 
   return (
-    <div className="min-h-screen bg-gradient-hero px-4 py-6 md:flex md:justify-center md:pt-10 md:pb-12">
+    <div className="min-h-screen bg-slate-100 px-4 py-6 md:flex md:justify-center md:pt-10 md:pb-12">
       <div className="flex w-full max-w-6xl flex-col gap-6 md:grid md:grid-cols-[280px_minmax(0,1fr)]">
         <DesktopSidebar
           stats={sidebarStats}
@@ -84,4 +84,3 @@ export const AppShell: React.FC = () => {
     </div>
   )
 }
-

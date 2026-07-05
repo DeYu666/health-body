@@ -122,6 +122,11 @@ export const MetricTrendPage: React.FC = () => {
     }
   }, [bloodPressureSeries])
 
+  const hasHighBloodSugar = useMemo(
+    () => bloodSugarSeries?.data.some((point) => point.value > 7) ?? false,
+    [bloodSugarSeries],
+  )
+
   const bloodSugarChart = useMemo(() => {
     if (!bloodSugarSeries) return undefined
     return {
@@ -150,14 +155,14 @@ export const MetricTrendPage: React.FC = () => {
           className="flex items-center gap-2 rounded-xl bg-secondary px-4 py-2 text-sm font-semibold text-white shadow-card transition hover:bg-emerald-600"
         >
           <FaPlus />
-          录入
+          AI 记录
         </button>
       </div>
 
       <div className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
         <FaInfoCircle className="text-primary" />
         <span>
-          持续记录体征数据，系统会自动标记异常波动并生成趋势洞察。
+          指标会逐步合并报告抽取、拍照识别、设备同步和一句话记录。
         </span>
       </div>
 
@@ -257,17 +262,18 @@ export const MetricTrendPage: React.FC = () => {
             </div>
           )}
         </div>
-        <div className="flex items-start gap-3 rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-700">
-          <FaExclamationTriangle className="mt-1" />
-          <div>
-            <p className="font-semibold">检测到 3 次异常值，建议咨询医生</p>
-            <p className="mt-1 text-xs">
-              若连续出现高于 7.0 mmol/L 的情况，请记录饮食并与内分泌科医生联系。
-            </p>
+        {hasHighBloodSugar ? (
+          <div className="flex items-start gap-3 rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-700">
+            <FaExclamationTriangle className="mt-1" />
+            <div>
+              <p className="font-semibold">检测到高于 7.0 mmol/L 的血糖记录</p>
+              <p className="mt-1 text-xs">
+                请结合测量时间、饮食和医生建议判断，系统提示仅用于资料整理。
+              </p>
+            </div>
           </div>
-        </div>
+        ) : null}
       </section>
     </div>
   )
 }
-

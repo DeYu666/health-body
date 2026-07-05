@@ -51,5 +51,11 @@ func AutoMigrate(db *gorm.DB) error {
 		&models.ReportFile{},
 		&models.ReportShare{},
 		&models.MetricEntry{},
+		&models.HealthDocument{},
+		&models.DocumentFile{},
+		&models.OCRResult{},
+		&models.ExtractedObservation{},
+		&models.AIAnalysis{},
+		&models.ReviewTask{},
 	)
 }
