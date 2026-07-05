@@ -39,6 +39,49 @@ export interface MetricSeries {
   data: MetricSeriesPoint[]
 }
 
+export interface ParsedDocumentOCRResult {
+  id: string
+  provider: string
+  rawText: string
+  confidence?: number
+  createdAt: string
+}
+
+export interface ParsedDocumentObservation {
+  id: string
+  name: string
+  normalizedName: string
+  code: string
+  valueNumber?: number
+  valueText: string
+  unit: string
+  referenceText: string
+  abnormalFlag: string
+  observedAt?: string
+  confidence?: number
+  reviewStatus: string
+}
+
+export interface ParsedHealthDocument {
+  id: string
+  title: string
+  category: string
+  subcategory?: string
+  sourceType: string
+  status: string
+  organization: string
+  department: string
+  documentDate?: string
+  summary: string
+  aiConclusion: string
+  confidence?: number
+  reviewTaskCount: number
+  ocrResults?: ParsedDocumentOCRResult[]
+  observations?: ParsedDocumentObservation[]
+  createdAt: string
+  updatedAt: string
+}
+
 export interface QuickMetric {
   id: string
   label: string

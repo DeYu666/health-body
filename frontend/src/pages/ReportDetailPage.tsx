@@ -1,16 +1,53 @@
 import dayjs from 'dayjs'
-import { useEffect, useMemo } from 'react'
-import { FaCalendarAlt, FaDownload, FaFileAlt, FaFilePdf, FaHospital, FaLink, FaShareAlt, FaShieldAlt, FaTrash } from 'react-icons/fa'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  FaBrain,
+  FaCalendarAlt,
+  FaDownload,
+  FaFileAlt,
+  FaFilePdf,
+  FaHospital,
+  FaLink,
+  FaMicroscope,
+  FaShareAlt,
+  FaShieldAlt,
+  FaTrash,
+} from 'react-icons/fa'
 import { useNavigate, useOutletContext, useParams } from 'react-router-dom'
 import type { AppShellContextValue } from '../components/layout/AppShell'
 import { useAppState } from '../context/AppStateContext'
 import { api } from '../lib/api'
+import type { ParsedDocumentObservation, ParsedHealthDocument } from '../types'
+
+const formatConfidence = (confidence?: number) => {
+  if (typeof confidence !== 'number') return '未评估'
+  return `${Math.round(confidence * 100)}%`
+}
+
+const formatObservationValue = (observation: ParsedDocumentObservation) => {
+  const value =
+    typeof observation.valueNumber === 'number'
+      ? observation.valueNumber < 1
+        ? observation.valueNumber.toFixed(3)
+        : observation.valueNumber.toString()
+      : observation.valueText
+  return `${value}${observation.unit ? ` ${observation.unit}` : ''}`
+}
+
+const abnormalFlagLabel: Record<string, string> = {
+  high: '偏高',
+  low: '偏低',
+  normal: '正常',
+}
 
 export const ReportDetailPage: React.FC = () => {
   const { reportId } = useParams<{ reportId: string }>()
   const navigate = useNavigate()
   const { setHeaderConfig } = useOutletContext<AppShellContextValue>()
   const { reports, deleteReport } = useAppState()
+  const [parsedDocument, setParsedDocument] = useState<ParsedHealthDocument | null>(null)
+  const [parseStatus, setParseStatus] = useState<'idle' | 'loading' | 'loaded' | 'empty' | 'error'>('idle')
+  const [parseError, setParseError] = useState<string | null>(null)
 
   const report = useMemo(
     () => reports.find((item) => item.id === reportId),
@@ -23,6 +60,36 @@ export const ReportDetailPage: React.FC = () => {
       showBackButton: true,
     })
   }, [setHeaderConfig])
+
+  useEffect(() => {
+    if (!reportId || !report) return
+
+    let active = true
+    setParseStatus('loading')
+    setParseError(null)
+    api
+      .getDocumentByLegacyReport(reportId)
+      .then((document) => {
+        if (!active) return
+        setParsedDocument(document)
+        setParseStatus('loaded')
+      })
+      .catch((err) => {
+        if (!active) return
+        setParsedDocument(null)
+        const message = err instanceof Error ? err.message : '加载 OCR/AI 解析失败'
+        if (message.includes('资料不存在')) {
+          setParseStatus('empty')
+        } else {
+          setParseStatus('error')
+          setParseError(message)
+        }
+      })
+
+    return () => {
+      active = false
+    }
+  }, [reportId, report])
 
   if (!report) {
     return (
@@ -73,6 +140,8 @@ export const ReportDetailPage: React.FC = () => {
   }
 
   const PreviewIcon = report.fileType === 'pdf' ? FaFilePdf : FaFileAlt
+  const latestOCR = parsedDocument?.ocrResults?.[0]
+  const observations = parsedDocument?.observations ?? []
 
   return (
     <div className="space-y-6 bg-white px-4 pb-14 pt-6 md:px-8">
@@ -107,6 +176,116 @@ export const ReportDetailPage: React.FC = () => {
           <div className="mt-4 rounded-2xl bg-white px-4 py-3 text-sm text-slate-600">
             <strong className="text-slate-800">备注：</strong>
             {report.notes}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="space-y-4 rounded-2xl bg-slate-50 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <FaBrain />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-slate-800">AI/OCR 解析</h2>
+              <p className="mt-1 text-xs text-slate-400">OCR 原文、AI 摘要和趋势抽取来源。</p>
+            </div>
+          </div>
+          {parsedDocument ? (
+            <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-500">
+              置信度 {formatConfidence(parsedDocument.confidence)}
+            </span>
+          ) : null}
+        </div>
+
+        {parseStatus === 'loading' ? (
+          <div className="rounded-xl bg-white px-4 py-3 text-sm text-slate-500">
+            正在读取 OCR/AI 解析结果...
+          </div>
+        ) : null}
+
+        {parseStatus === 'empty' ? (
+          <div className="rounded-xl bg-white px-4 py-3 text-sm text-slate-500">
+            暂无 OCR/AI 解析结果，可回到档案页点击“解析历史”生成。
+          </div>
+        ) : null}
+
+        {parseStatus === 'error' ? (
+          <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+            {parseError}
+          </div>
+        ) : null}
+
+        {parsedDocument ? (
+          <div className="space-y-3">
+            <div className="rounded-xl bg-white px-4 py-3 text-sm text-slate-600">
+              <div className="flex flex-wrap gap-2">
+                <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">
+                  {parsedDocument.category || '未分类'}
+                </span>
+                <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">
+                  {parsedDocument.status === 'ready' ? '已就绪' : '待复核'}
+                </span>
+                {latestOCR ? (
+                  <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">
+                    OCR {formatConfidence(latestOCR.confidence)}
+                  </span>
+                ) : null}
+              </div>
+              {parsedDocument.summary ? (
+                <p className="mt-3 leading-6">{parsedDocument.summary}</p>
+              ) : null}
+              {parsedDocument.aiConclusion ? (
+                <p className="mt-2 leading-6 text-slate-500">{parsedDocument.aiConclusion}</p>
+              ) : null}
+            </div>
+
+            {observations.length > 0 ? (
+              <div className="rounded-xl bg-white p-4">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800">
+                  <FaMicroscope className="text-primary" />
+                  结构化指标
+                </div>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {observations.map((observation) => (
+                    <div
+                      key={observation.id}
+                      className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-800">{observation.name}</p>
+                          <p className="mt-1 text-xs text-slate-400">{observation.referenceText}</p>
+                        </div>
+                        <span
+                          className={`shrink-0 rounded-md px-2 py-1 text-xs font-semibold ${
+                            observation.abnormalFlag === 'high' || observation.abnormalFlag === 'low'
+                              ? 'bg-amber-50 text-amber-700'
+                              : 'bg-emerald-50 text-emerald-700'
+                          }`}
+                        >
+                          {abnormalFlagLabel[observation.abnormalFlag] ?? '待复核'}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-lg font-semibold text-slate-900">
+                        {formatObservationValue(observation)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {latestOCR ? (
+              <details className="rounded-xl bg-white p-4">
+                <summary className="cursor-pointer text-sm font-semibold text-slate-800">
+                  查看 OCR 原文（{latestOCR.rawText.length} 字）
+                </summary>
+                <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-950 p-3 text-xs leading-5 text-slate-100">
+                  {latestOCR.rawText || '无 OCR 文本'}
+                </pre>
+              </details>
+            ) : null}
           </div>
         ) : null}
       </section>
@@ -243,4 +422,3 @@ export const ReportDetailPage: React.FC = () => {
     </div>
   )
 }
-

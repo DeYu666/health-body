@@ -24,6 +24,7 @@ type DocumentService interface {
 	BackfillReports(ctx context.Context, userID uuid.UUID, input BackfillReportsInput) (*BackfillReportsDTO, error)
 	List(ctx context.Context, filter repository.DocumentFilter) (*PaginatedDocuments, error)
 	Get(ctx context.Context, userID uuid.UUID, documentID uuid.UUID) (*DocumentDTO, error)
+	GetByLegacyReport(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) (*DocumentDTO, error)
 }
 
 type documentService struct {
@@ -87,24 +88,49 @@ type DocumentAnalysisDTO struct {
 	CreatedAt    time.Time `json:"createdAt"`
 }
 
+type DocumentOCRResultDTO struct {
+	ID         uuid.UUID `json:"id"`
+	Provider   string    `json:"provider"`
+	RawText    string    `json:"rawText"`
+	Confidence *float64  `json:"confidence,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
+type DocumentObservationDTO struct {
+	ID             uuid.UUID  `json:"id"`
+	Name           string     `json:"name"`
+	NormalizedName string     `json:"normalizedName"`
+	Code           string     `json:"code"`
+	ValueNumber    *float64   `json:"valueNumber,omitempty"`
+	ValueText      string     `json:"valueText"`
+	Unit           string     `json:"unit"`
+	ReferenceText  string     `json:"referenceText"`
+	AbnormalFlag   string     `json:"abnormalFlag"`
+	ObservedAt     *time.Time `json:"observedAt,omitempty"`
+	Confidence     *float64   `json:"confidence,omitempty"`
+	ReviewStatus   string     `json:"reviewStatus"`
+}
+
 type DocumentDTO struct {
-	ID              uuid.UUID             `json:"id"`
-	Title           string                `json:"title"`
-	Category        string                `json:"category"`
-	Subcategory     string                `json:"subcategory"`
-	SourceType      string                `json:"sourceType"`
-	Status          string                `json:"status"`
-	Organization    string                `json:"organization"`
-	Department      string                `json:"department"`
-	DocumentDate    *time.Time            `json:"documentDate,omitempty"`
-	Summary         string                `json:"summary"`
-	AIConclusion    string                `json:"aiConclusion"`
-	Confidence      *float64              `json:"confidence,omitempty"`
-	ReviewTaskCount int64                 `json:"reviewTaskCount"`
-	Files           []DocumentFileDTO     `json:"files,omitempty"`
-	Analyses        []DocumentAnalysisDTO `json:"analyses,omitempty"`
-	CreatedAt       time.Time             `json:"createdAt"`
-	UpdatedAt       time.Time             `json:"updatedAt"`
+	ID              uuid.UUID                `json:"id"`
+	Title           string                   `json:"title"`
+	Category        string                   `json:"category"`
+	Subcategory     string                   `json:"subcategory"`
+	SourceType      string                   `json:"sourceType"`
+	Status          string                   `json:"status"`
+	Organization    string                   `json:"organization"`
+	Department      string                   `json:"department"`
+	DocumentDate    *time.Time               `json:"documentDate,omitempty"`
+	Summary         string                   `json:"summary"`
+	AIConclusion    string                   `json:"aiConclusion"`
+	Confidence      *float64                 `json:"confidence,omitempty"`
+	ReviewTaskCount int64                    `json:"reviewTaskCount"`
+	Files           []DocumentFileDTO        `json:"files,omitempty"`
+	OCRResults      []DocumentOCRResultDTO   `json:"ocrResults,omitempty"`
+	Observations    []DocumentObservationDTO `json:"observations,omitempty"`
+	Analyses        []DocumentAnalysisDTO    `json:"analyses,omitempty"`
+	CreatedAt       time.Time                `json:"createdAt"`
+	UpdatedAt       time.Time                `json:"updatedAt"`
 }
 
 type ImportedDocumentDTO struct {
@@ -509,6 +535,17 @@ func (s *documentService) Get(ctx context.Context, userID uuid.UUID, documentID 
 	return s.mapDocumentToDTO(ctx, document)
 }
 
+func (s *documentService) GetByLegacyReport(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) (*DocumentDTO, error) {
+	document, err := s.repo.FindByLegacyReport(ctx, userID, reportID)
+	if err != nil {
+		return nil, err
+	}
+	if document == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return s.mapDocumentToDTO(ctx, document)
+}
+
 func (s *documentService) createLegacyReport(ctx context.Context, userID uuid.UUID, document *models.HealthDocument, input ImportDocumentInput) (*ReportDTO, error) {
 	reportFiles := make([]CreateReportFileInput, 0, len(input.Files))
 	for i, file := range input.Files {
@@ -572,6 +609,35 @@ func (s *documentService) mapDocumentToDTO(ctx context.Context, document *models
 		})
 	}
 
+	ocrResults := make([]DocumentOCRResultDTO, 0, len(document.OCRResults))
+	for _, result := range document.OCRResults {
+		ocrResults = append(ocrResults, DocumentOCRResultDTO{
+			ID:         result.ID,
+			Provider:   result.Provider,
+			RawText:    result.RawText,
+			Confidence: result.Confidence,
+			CreatedAt:  result.CreatedAt,
+		})
+	}
+
+	observations := make([]DocumentObservationDTO, 0, len(document.Observations))
+	for _, observation := range document.Observations {
+		observations = append(observations, DocumentObservationDTO{
+			ID:             observation.ID,
+			Name:           observation.Name,
+			NormalizedName: observation.NormalizedName,
+			Code:           observation.Code,
+			ValueNumber:    observation.ValueNumber,
+			ValueText:      observation.ValueText,
+			Unit:           observation.Unit,
+			ReferenceText:  observation.ReferenceText,
+			AbnormalFlag:   observation.AbnormalFlag,
+			ObservedAt:     observation.ObservedAt,
+			Confidence:     observation.Confidence,
+			ReviewStatus:   observation.ReviewStatus,
+		})
+	}
+
 	return &DocumentDTO{
 		ID:              document.ID,
 		Title:           document.Title,
@@ -587,6 +653,8 @@ func (s *documentService) mapDocumentToDTO(ctx context.Context, document *models
 		Confidence:      document.Confidence,
 		ReviewTaskCount: reviewCount,
 		Files:           files,
+		OCRResults:      ocrResults,
+		Observations:    observations,
 		Analyses:        analyses,
 		CreatedAt:       document.CreatedAt,
 		UpdatedAt:       document.UpdatedAt,

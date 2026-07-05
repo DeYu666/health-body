@@ -1,6 +1,7 @@
 import type {
   MetricEntry,
   MetricSeries,
+  ParsedHealthDocument,
   Report,
   ReportFile,
   UploadPayload,
@@ -116,6 +117,45 @@ interface ImportedDocument {
     id: string
     title: string
   }
+}
+
+interface ParsedDocumentResponse {
+  id: string
+  title: string
+  category: string
+  subcategory?: string
+  sourceType: string
+  status: string
+  organization: string
+  department: string
+  documentDate?: string
+  summary: string
+  aiConclusion: string
+  confidence?: number
+  reviewTaskCount: number
+  ocrResults?: Array<{
+    id: string
+    provider: string
+    rawText: string
+    confidence?: number
+    createdAt: string
+  }>
+  observations?: Array<{
+    id: string
+    name: string
+    normalizedName: string
+    code: string
+    valueNumber?: number
+    valueText: string
+    unit: string
+    referenceText: string
+    abnormalFlag: string
+    observedAt?: string
+    confidence?: number
+    reviewStatus: string
+  }>
+  createdAt: string
+  updatedAt: string
 }
 
 interface BackfillReportsResponse {
@@ -427,6 +467,10 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify({ limit }),
     })
+  }
+
+  async getDocumentByLegacyReport(reportId: string): Promise<ParsedHealthDocument> {
+    return this.request<ParsedDocumentResponse>(`/documents/by-legacy-report/${reportId}`)
   }
 
   async createReport(

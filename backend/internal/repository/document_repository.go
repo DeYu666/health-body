@@ -103,6 +103,9 @@ func (r *documentRepository) FindByID(ctx context.Context, id uuid.UUID, userID 
 		Preload("OCRResults", func(db *gorm.DB) *gorm.DB {
 			return db.Order("created_at DESC")
 		}).
+		Preload("Observations", func(db *gorm.DB) *gorm.DB {
+			return db.Order("observed_at DESC, created_at DESC")
+		}).
 		Preload("Analyses", func(db *gorm.DB) *gorm.DB {
 			return db.Order("created_at DESC")
 		}).
@@ -121,6 +124,12 @@ func (r *documentRepository) FindByLegacyReport(ctx context.Context, userID uuid
 	err := r.db.WithContext(ctx).
 		Where("user_id = ? AND metadata ->> 'legacyReportId' = ?", userID, reportID.String()).
 		Preload("OCRResults", func(db *gorm.DB) *gorm.DB {
+			return db.Order("created_at DESC")
+		}).
+		Preload("Observations", func(db *gorm.DB) *gorm.DB {
+			return db.Order("observed_at DESC, created_at DESC")
+		}).
+		Preload("Analyses", func(db *gorm.DB) *gorm.DB {
 			return db.Order("created_at DESC")
 		}).
 		Order("created_at DESC").

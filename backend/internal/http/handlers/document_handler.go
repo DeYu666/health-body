@@ -113,6 +113,30 @@ func (h *DocumentHandler) GetDocument(c *gin.Context) {
 	c.JSON(http.StatusOK, document)
 }
 
+func (h *DocumentHandler) GetDocumentByLegacyReport(c *gin.Context) {
+	userID, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	reportID, err := uuid.Parse(c.Param("reportId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的报告 ID"})
+		return
+	}
+
+	document, err := h.service.GetByLegacyReport(c.Request.Context(), userID, reportID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "资料不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, document)
+}
+
 func (h *DocumentHandler) GetDocumentStatus(c *gin.Context) {
 	userID, ok := requireUser(c)
 	if !ok {

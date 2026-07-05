@@ -83,22 +83,23 @@ type MetricEntry struct {
 
 type HealthDocument struct {
 	BaseModel
-	UserID       uuid.UUID      `json:"userId" gorm:"type:uuid;index"`
-	Title        string         `json:"title" gorm:"size:200;not null"`
-	Category     string         `json:"category" gorm:"size:64;index"`
-	Subcategory  string         `json:"subcategory" gorm:"size:64;index"`
-	SourceType   string         `json:"sourceType" gorm:"size:32;index"`
-	Status       string         `json:"status" gorm:"size:32;index;default:'uploaded'"`
-	Organization string         `json:"organization" gorm:"size:160"`
-	Department   string         `json:"department" gorm:"size:120"`
-	DocumentDate *time.Time     `json:"documentDate" gorm:"index"`
-	Summary      string         `json:"summary" gorm:"type:text"`
-	AIConclusion string         `json:"aiConclusion" gorm:"type:text"`
-	Confidence   *float64       `json:"confidence"`
-	Metadata     datatypes.JSON `json:"metadata" gorm:"type:jsonb"`
-	Files        []DocumentFile `json:"files" gorm:"foreignKey:DocumentID"`
-	OCRResults   []OCRResult    `json:"ocrResults" gorm:"foreignKey:DocumentID"`
-	Analyses     []AIAnalysis   `json:"analyses" gorm:"foreignKey:DocumentID"`
+	UserID       uuid.UUID              `json:"userId" gorm:"type:uuid;index"`
+	Title        string                 `json:"title" gorm:"size:200;not null"`
+	Category     string                 `json:"category" gorm:"size:64;index"`
+	Subcategory  string                 `json:"subcategory" gorm:"size:64;index"`
+	SourceType   string                 `json:"sourceType" gorm:"size:32;index"`
+	Status       string                 `json:"status" gorm:"size:32;index;default:'uploaded'"`
+	Organization string                 `json:"organization" gorm:"size:160"`
+	Department   string                 `json:"department" gorm:"size:120"`
+	DocumentDate *time.Time             `json:"documentDate" gorm:"index"`
+	Summary      string                 `json:"summary" gorm:"type:text"`
+	AIConclusion string                 `json:"aiConclusion" gorm:"type:text"`
+	Confidence   *float64               `json:"confidence"`
+	Metadata     datatypes.JSON         `json:"metadata" gorm:"type:jsonb"`
+	Files        []DocumentFile         `json:"files" gorm:"foreignKey:DocumentID"`
+	OCRResults   []OCRResult            `json:"ocrResults" gorm:"foreignKey:DocumentID"`
+	Observations []ExtractedObservation `json:"observations" gorm:"foreignKey:DocumentID"`
+	Analyses     []AIAnalysis           `json:"analyses" gorm:"foreignKey:DocumentID"`
 }
 
 type DocumentFile struct {
