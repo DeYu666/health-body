@@ -24,6 +24,7 @@ type DocumentRepository interface {
 	FindByID(ctx context.Context, id uuid.UUID, userID uuid.UUID) (*models.HealthDocument, error)
 	List(ctx context.Context, filter DocumentFilter) ([]models.HealthDocument, int64, error)
 	CountOpenReviewTasks(ctx context.Context, documentID uuid.UUID) (int64, error)
+	ExistsForLegacyReport(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) (bool, error)
 }
 
 type documentRepository struct {
@@ -164,4 +165,13 @@ func (r *documentRepository) CountOpenReviewTasks(ctx context.Context, documentI
 		Where("document_id = ? AND status = ?", documentID, "open").
 		Count(&count).Error
 	return count, err
+}
+
+func (r *documentRepository) ExistsForLegacyReport(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&models.HealthDocument{}).
+		Where("user_id = ? AND metadata ->> 'legacyReportId' = ?", userID, reportID.String()).
+		Count(&count).Error
+	return count > 0, err
 }

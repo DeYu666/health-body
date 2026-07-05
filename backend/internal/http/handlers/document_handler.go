@@ -44,6 +44,27 @@ func (h *DocumentHandler) ImportDocument(c *gin.Context) {
 	c.JSON(http.StatusCreated, result)
 }
 
+func (h *DocumentHandler) BackfillReports(c *gin.Context) {
+	userID, ok := requireUser(c)
+	if !ok {
+		return
+	}
+
+	var input service.BackfillReportsInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	result, err := h.service.BackfillReports(c.Request.Context(), userID, input)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
 func (h *DocumentHandler) ListDocuments(c *gin.Context) {
 	userID, ok := requireUser(c)
 	if !ok {

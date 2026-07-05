@@ -118,6 +118,19 @@ interface ImportedDocument {
   }
 }
 
+interface BackfillReportsResponse {
+  processed: number
+  skipped: number
+  failed: number
+  items: Array<{
+    reportId: string
+    documentId?: string
+    title: string
+    status: string
+    error?: string
+  }>
+}
+
 class ApiClient {
   private getAuthToken(): string | null {
     if (typeof window === 'undefined') return null
@@ -406,6 +419,13 @@ class ApiClient {
     return this.request<ImportedDocument>('/documents/import', {
       method: 'POST',
       body: JSON.stringify(payload),
+    })
+  }
+
+  async backfillReports(limit = 20): Promise<BackfillReportsResponse> {
+    return this.request<BackfillReportsResponse>('/documents/backfill-reports', {
+      method: 'POST',
+      body: JSON.stringify({ limit }),
     })
   }
 
@@ -808,4 +828,4 @@ class ApiClient {
 }
 
 export const api = new ApiClient()
-export type { AuthToken }
+export type { AuthToken, BackfillReportsResponse }

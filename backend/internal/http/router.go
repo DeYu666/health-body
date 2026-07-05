@@ -72,6 +72,7 @@ func NewRouter(cfg *config.Config, registry HandlerRegistry) *Router {
 		{
 			documents.GET("", registry.Documents.ListDocuments)
 			documents.POST("/import", registry.Documents.ImportDocument)
+			documents.POST("/backfill-reports", registry.Documents.BackfillReports)
 			documents.GET("/:id/status", registry.Documents.GetDocumentStatus)
 			documents.GET("/:id", registry.Documents.GetDocument)
 		}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ var ErrEmptyDocument = errors.New("document import requires at least one file or
 
 type DocumentService interface {
 	Import(ctx context.Context, userID uuid.UUID, input ImportDocumentInput) (*ImportedDocumentDTO, error)
+	BackfillReports(ctx context.Context, userID uuid.UUID, input BackfillReportsInput) (*BackfillReportsDTO, error)
 	List(ctx context.Context, filter repository.DocumentFilter) (*PaginatedDocuments, error)
 	Get(ctx context.Context, userID uuid.UUID, documentID uuid.UUID) (*DocumentDTO, error)
 }
@@ -27,17 +29,19 @@ type DocumentService interface {
 type documentService struct {
 	repo          repository.DocumentRepository
 	reportService ReportService
+	metricService MetricService
 	aiAnalyzer    AIAnalyzer
 	ocrProcessor  OCRProcessor
 }
 
-func NewDocumentService(repo repository.DocumentRepository, reportService ReportService, aiAnalyzer AIAnalyzer, ocrProcessor OCRProcessor) DocumentService {
+func NewDocumentService(repo repository.DocumentRepository, reportService ReportService, metricService MetricService, aiAnalyzer AIAnalyzer, ocrProcessor OCRProcessor) DocumentService {
 	if ocrProcessor == nil {
 		ocrProcessor = &noopOCRProcessor{provider: "none"}
 	}
 	return &documentService{
 		repo:          repo,
 		reportService: reportService,
+		metricService: metricService,
 		aiAnalyzer:    aiAnalyzer,
 		ocrProcessor:  ocrProcessor,
 	}
@@ -115,7 +119,35 @@ type PaginatedDocuments struct {
 	Offset int           `json:"offset"`
 }
 
+type BackfillReportsInput struct {
+	Limit int `json:"limit"`
+}
+
+type BackfillReportItemDTO struct {
+	ReportID   uuid.UUID  `json:"reportId"`
+	DocumentID *uuid.UUID `json:"documentId,omitempty"`
+	Title      string     `json:"title"`
+	Status     string     `json:"status"`
+	Error      string     `json:"error,omitempty"`
+}
+
+type BackfillReportsDTO struct {
+	Processed int                     `json:"processed"`
+	Skipped   int                     `json:"skipped"`
+	Failed    int                     `json:"failed"`
+	Items     []BackfillReportItemDTO `json:"items"`
+}
+
+type importOptions struct {
+	CreateLegacyReport bool
+	Metadata           map[string]any
+}
+
 func (s *documentService) Import(ctx context.Context, userID uuid.UUID, input ImportDocumentInput) (*ImportedDocumentDTO, error) {
+	return s.importDocument(ctx, userID, input, importOptions{CreateLegacyReport: true})
+}
+
+func (s *documentService) importDocument(ctx context.Context, userID uuid.UUID, input ImportDocumentInput, options importOptions) (*ImportedDocumentDTO, error) {
 	if len(input.Files) == 0 && strings.TrimSpace(input.Note) == "" {
 		return nil, ErrEmptyDocument
 	}
@@ -182,6 +214,9 @@ func (s *documentService) Import(ctx context.Context, userID uuid.UUID, input Im
 		"hasAIResult":  analysisErr == nil,
 		"analysisNote": analysisErrorNote(analysisErr),
 	}
+	for key, value := range options.Metadata {
+		metadata[key] = value
+	}
 	metadataJSON, err := json.Marshal(metadata)
 	if err != nil {
 		return nil, err
@@ -247,8 +282,15 @@ func (s *documentService) Import(ctx context.Context, userID uuid.UUID, input Im
 		return nil, err
 	}
 
-	report, err := s.createLegacyReport(ctx, userID, document, input)
-	if err != nil {
+	var report *ReportDTO
+	if options.CreateLegacyReport {
+		report, err = s.createLegacyReport(ctx, userID, document, input)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if err := s.syncMetricsFromDocument(ctx, userID, document, input, firstNonEmpty(ocrRawText, noteOnlyRawText(input)), summary); err != nil {
 		return nil, err
 	}
 
@@ -261,6 +303,83 @@ func (s *documentService) Import(ctx context.Context, userID uuid.UUID, input Im
 		Document:     *dto,
 		LegacyReport: report,
 	}, nil
+}
+
+func (s *documentService) BackfillReports(ctx context.Context, userID uuid.UUID, input BackfillReportsInput) (*BackfillReportsDTO, error) {
+	processLimit := input.Limit
+	if processLimit <= 0 {
+		processLimit = 20
+	}
+	if processLimit > 50 {
+		processLimit = 50
+	}
+
+	reports, err := s.reportService.List(ctx, repository.ReportFilter{
+		UserID: userID,
+		Limit:  1000,
+		Order:  "report_date DESC",
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	result := &BackfillReportsDTO{
+		Items: make([]BackfillReportItemDTO, 0, len(reports.Items)),
+	}
+	for _, report := range reports.Items {
+		if result.Processed+result.Failed >= processLimit {
+			break
+		}
+		item := BackfillReportItemDTO{
+			ReportID: report.ID,
+			Title:    report.Title,
+		}
+
+		exists, err := s.repo.ExistsForLegacyReport(ctx, userID, report.ID)
+		if err != nil {
+			item.Status = "failed"
+			item.Error = err.Error()
+			result.Failed++
+			result.Items = append(result.Items, item)
+			continue
+		}
+		if exists {
+			item.Status = "skipped"
+			result.Skipped++
+			result.Items = append(result.Items, item)
+			continue
+		}
+
+		importInput := importInputFromReport(report)
+		if len(importInput.Files) == 0 && strings.TrimSpace(importInput.Note) == "" {
+			item.Status = "skipped"
+			item.Error = "empty_report"
+			result.Skipped++
+			result.Items = append(result.Items, item)
+			continue
+		}
+
+		imported, err := s.importDocument(ctx, userID, importInput, importOptions{
+			CreateLegacyReport: false,
+			Metadata: map[string]any{
+				"source":         "legacy_report_backfill",
+				"legacyReportId": report.ID.String(),
+			},
+		})
+		if err != nil {
+			item.Status = "failed"
+			item.Error = err.Error()
+			result.Failed++
+			result.Items = append(result.Items, item)
+			continue
+		}
+		item.Status = imported.Document.Status
+		item.DocumentID = &imported.Document.ID
+		result.Processed++
+		result.Items = append(result.Items, item)
+	}
+
+	return result, nil
 }
 
 func (s *documentService) List(ctx context.Context, filter repository.DocumentFilter) (*PaginatedDocuments, error) {
@@ -284,6 +403,25 @@ func (s *documentService) List(ctx context.Context, filter repository.DocumentFi
 		Limit:  filter.Limit,
 		Offset: filter.Offset,
 	}, nil
+}
+
+func (s *documentService) syncMetricsFromDocument(ctx context.Context, userID uuid.UUID, document *models.HealthDocument, input ImportDocumentInput, rawText string, summary string) error {
+	if s.metricService == nil {
+		return nil
+	}
+	observedAt := time.Now()
+	if document.DocumentDate != nil {
+		observedAt = *document.DocumentDate
+	}
+
+	sourceText := strings.Join([]string{rawText, input.Note, summary}, "\n")
+	metrics := extractMetricInputsFromText(sourceText, observedAt, document.Title, document.ID)
+	for _, metric := range metrics {
+		if _, err := s.metricService.Create(ctx, userID, metric); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *documentService) Get(ctx context.Context, userID uuid.UUID, documentID uuid.UUID) (*DocumentDTO, error) {
@@ -392,6 +530,59 @@ func buildDocumentTitle(input ImportDocumentInput, documentDate time.Time) strin
 		return "自然语言健康记录 · " + documentDate.Format("2006-01-02")
 	}
 	return "待识别健康资料 · " + documentDate.Format("2006-01-02")
+}
+
+func importInputFromReport(report ReportDTO) ImportDocumentInput {
+	files := make([]ImportDocumentFileInput, 0, len(report.Files))
+	for i, file := range report.Files {
+		sizeBytes := int64(file.FileSizeMB * 1024 * 1024)
+		files = append(files, ImportDocumentFileInput{
+			FileURL:      file.FileURL,
+			PreviewURL:   file.PreviewURL,
+			FileType:     file.FileType,
+			FileSize:     sizeBytes,
+			DisplayOrder: i,
+		})
+	}
+	if len(files) == 0 && report.FileURL != "" {
+		files = append(files, ImportDocumentFileInput{
+			FileURL:      report.FileURL,
+			PreviewURL:   firstNonEmpty(report.PreviewURL, report.FileURL),
+			FileType:     report.FileType,
+			FileSize:     int64(report.FileSizeMB * 1024 * 1024),
+			DisplayOrder: 0,
+		})
+	}
+
+	documentDate := report.ReportDate
+	return ImportDocumentInput{
+		Title:        report.Title,
+		Category:     categoryFromReport(report),
+		SourceType:   "legacy_report",
+		Organization: report.Hospital,
+		DocumentDate: &documentDate,
+		Note:         report.Notes,
+		Files:        files,
+	}
+}
+
+func categoryFromReport(report ReportDTO) string {
+	haystack := strings.Join(append([]string{report.Title, report.Hospital}, report.Tags...), " ")
+	categoryKeywords := map[string][]string{
+		"体检": {"体检"},
+		"检验": {"检验", "血常规", "尿常规", "肝功能", "肾功能", "血脂", "血糖"},
+		"影像": {"影像", "CT", "MRI", "B超", "超声", "X光", "心电图"},
+		"病历": {"病历", "门诊", "住院", "出院"},
+		"用药": {"用药", "处方", "药"},
+	}
+	for category, keywords := range categoryKeywords {
+		for _, keyword := range keywords {
+			if strings.Contains(haystack, keyword) {
+				return category
+			}
+		}
+	}
+	return "其他"
 }
 
 func buildFallbackSummary(input ImportDocumentInput, title string, ocrExtraction OCRExtraction) string {
@@ -568,4 +759,80 @@ func noteOnlyRawText(input ImportDocumentInput) string {
 
 func strconvItoa(value int) string {
 	return strconv.FormatInt(int64(value), 10)
+}
+
+var (
+	bloodPressurePattern = regexp.MustCompile(`(?i)(?:血压|bp|blood pressure)?\s*[:：]?\s*(\d{2,3})\s*/\s*(\d{2,3})`)
+	bloodPressureWords   = regexp.MustCompile(`(?i)(?:血压|bp|blood pressure)\s*[:：]?\s*(\d{2,3})\s+(\d{2,3})`)
+	weightPattern        = regexp.MustCompile(`(?:体重|weight)\s*[:：]?\s*(\d{2,3}(?:\.\d+)?)\s*(?:kg|公斤|千克)?`)
+	bloodSugarPattern    = regexp.MustCompile(`(?i)(?:血糖|葡萄糖|glu|glucose)\s*[:：]?\s*(\d{1,2}(?:\.\d+)?)\s*(?:mmol/L|mmol/l)?`)
+	heartRatePattern     = regexp.MustCompile(`(?i)(?:心率|脉搏|hr|heart rate)\s*[:：]?\s*(\d{2,3})\s*(?:次/分|bpm)?`)
+	temperaturePattern   = regexp.MustCompile(`(?:体温|temperature)\s*[:：]?\s*(3\d(?:\.\d+)?)\s*(?:℃|°C|度)?`)
+	bmiPattern           = regexp.MustCompile(`(?i)(?:BMI|体质指数)\s*[:：]?\s*(\d{1,2}(?:\.\d+)?)`)
+)
+
+func extractMetricInputsFromText(text string, recordedAt time.Time, documentTitle string, documentID uuid.UUID) []CreateMetricInput {
+	cleaned := strings.ReplaceAll(text, "／", "/")
+	cleaned = strings.ReplaceAll(cleaned, "：", ":")
+	notes := "OCR/AI 来源：" + documentTitle + " #" + documentID.String()
+	metrics := make([]CreateMetricInput, 0, 4)
+	seen := map[string]struct{}{}
+
+	add := func(input CreateMetricInput) {
+		if _, ok := seen[input.MetricType]; ok {
+			return
+		}
+		seen[input.MetricType] = struct{}{}
+		metrics = append(metrics, input)
+	}
+
+	if match := firstRegexMatch(cleaned, bloodPressurePattern, bloodPressureWords); len(match) >= 3 {
+		systolic, err1 := strconv.ParseFloat(match[1], 64)
+		diastolic, err2 := strconv.ParseFloat(match[2], 64)
+		if err1 == nil && err2 == nil && systolic >= 60 && systolic <= 250 && diastolic >= 30 && diastolic <= 160 {
+			add(CreateMetricInput{
+				MetricType:     "blood-pressure",
+				PrimaryValue:   systolic,
+				SecondaryValue: &diastolic,
+				Unit:           "mmHg",
+				RecordedAt:     recordedAt,
+				Notes:          notes,
+			})
+		}
+	}
+
+	addNumberMetric(cleaned, weightPattern, "weight", "kg", recordedAt, notes, 20, 250, add)
+	addNumberMetric(cleaned, bloodSugarPattern, "blood-sugar", "mmol/L", recordedAt, notes, 1, 40, add)
+	addNumberMetric(cleaned, heartRatePattern, "heart-rate", "bpm", recordedAt, notes, 30, 220, add)
+	addNumberMetric(cleaned, temperaturePattern, "temperature", "℃", recordedAt, notes, 34, 43, add)
+	addNumberMetric(cleaned, bmiPattern, "bmi", "", recordedAt, notes, 10, 60, add)
+
+	return metrics
+}
+
+func firstRegexMatch(text string, patterns ...*regexp.Regexp) []string {
+	for _, pattern := range patterns {
+		if match := pattern.FindStringSubmatch(text); len(match) > 0 {
+			return match
+		}
+	}
+	return nil
+}
+
+func addNumberMetric(text string, pattern *regexp.Regexp, metricType string, unit string, recordedAt time.Time, notes string, minValue float64, maxValue float64, add func(CreateMetricInput)) {
+	match := pattern.FindStringSubmatch(text)
+	if len(match) < 2 {
+		return
+	}
+	value, err := strconv.ParseFloat(match[1], 64)
+	if err != nil || value < minValue || value > maxValue {
+		return
+	}
+	add(CreateMetricInput{
+		MetricType:   metricType,
+		PrimaryValue: value,
+		Unit:         unit,
+		RecordedAt:   recordedAt,
+		Notes:        notes,
+	})
 }

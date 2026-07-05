@@ -7,6 +7,9 @@
 - [x] Add SenseNova OpenAI-compatible client configuration with safe fallback when `SENSENOVA_API_KEY` is unavailable.
 - [x] Switch the frontend import page to upload files first, then call `documents/import`.
 - [x] Add a PaddleOCR HTTP worker for uploaded images/PDFs and persist OCR text/layout into `ocr_results`.
+- [x] Add legacy report backfill so existing `reports` can be parsed by OCR/AI into `health_documents`.
+- [x] Sync conservative OCR/AI extracted vitals into metric trends.
+- [x] Add archive-page parsing action and make the dashboard bell route to pending documents.
 - Add async processing jobs for OCR, AI classification, AI extraction, review task generation, and observation trend sync.
 - Persist extracted lab/vital observations into `extracted_observations`.
 - Persist structured summary, risks, recommendations, and source citations into `ai_analyses`.

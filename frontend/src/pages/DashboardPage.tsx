@@ -80,7 +80,7 @@ export const DashboardPage: React.FC = () => {
         id: 'pending',
         tone: 'warning' as const,
         title: `${pendingReports.length} 份资料等待 AI 整理`,
-        detail: '原始文件已保存，后续可接入 OCR 后进入字段确认。',
+        detail: '可在档案页触发 OCR/AI 解析，低置信度字段再确认。',
         action: '去档案查看',
         path: '/archive',
       })
@@ -144,8 +144,19 @@ export const DashboardPage: React.FC = () => {
             {dayjs().format('YYYY-MM-DD')} · 重点关注资料、指标和待确认事项。
           </p>
         </div>
-        <button className="flex h-10 w-10 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm transition hover:bg-primary hover:text-white">
+        <button
+          type="button"
+          onClick={() => navigate('/archive', { state: { category: '待处理' } })}
+          className="relative flex h-10 w-10 items-center justify-center rounded-lg bg-white text-slate-500 shadow-sm transition hover:bg-primary hover:text-white"
+          aria-label="查看待处理资料"
+          title="查看待处理资料"
+        >
           <FaBell />
+          {pendingReports.length > 0 ? (
+            <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold text-white">
+              {pendingReports.length > 9 ? '9+' : pendingReports.length}
+            </span>
+          ) : null}
         </button>
       </div>
 

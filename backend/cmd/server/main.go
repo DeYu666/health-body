@@ -43,7 +43,7 @@ func main() {
 	metricService := service.NewMetricService(metricRepo)
 	aiAnalyzer := service.NewAIAnalyzer(cfg)
 	ocrProcessor := service.NewOCRProcessor(cfg)
-	documentService := service.NewDocumentService(documentRepo, reportService, aiAnalyzer, ocrProcessor)
+	documentService := service.NewDocumentService(documentRepo, reportService, metricService, aiAnalyzer, ocrProcessor)
 
 	uploadService, err := service.NewUploadService(cfg)
 	if err != nil {

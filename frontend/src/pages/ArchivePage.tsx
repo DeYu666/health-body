@@ -2,15 +2,17 @@ import clsx from 'classnames'
 import dayjs from 'dayjs'
 import { useEffect, useMemo, useState } from 'react'
 import {
+  FaBrain,
   FaChevronRight,
   FaClock,
   FaFileMedical,
   FaFolderOpen,
   FaSearch,
 } from 'react-icons/fa'
-import { useNavigate, useOutletContext } from 'react-router-dom'
+import { useLocation, useNavigate, useOutletContext } from 'react-router-dom'
 import type { AppShellContextValue } from '../components/layout/AppShell'
 import { useAppState } from '../context/AppStateContext'
+import { api } from '../lib/api'
 import type { Report } from '../types'
 
 const categoryTabs = ['全部', '待处理', '体检', '检验', '影像', '病历', '用药', '其他'] as const
@@ -55,18 +57,28 @@ const groupByMonth = (reports: Report[]) => {
 }
 
 export const ArchivePage: React.FC = () => {
-  const { reports } = useAppState()
+  const { reports, refreshReports, refreshMetrics } = useAppState()
   const navigate = useNavigate()
+  const location = useLocation()
   const { setHeaderConfig } = useOutletContext<AppShellContextValue>()
   const [activeCategory, setActiveCategory] = useState<CategoryTab>('全部')
   const [searchTerm, setSearchTerm] = useState('')
   const [view, setView] = useState<'library' | 'timeline'>('library')
+  const [backfillStatus, setBackfillStatus] = useState<'idle' | 'running'>('idle')
+  const [backfillMessage, setBackfillMessage] = useState<string | null>(null)
 
   useEffect(() => {
     setHeaderConfig({
       accent: 'light',
     })
   }, [setHeaderConfig])
+
+  useEffect(() => {
+    const state = location.state as { category?: CategoryTab } | null
+    if (state?.category && categoryTabs.includes(state.category)) {
+      setActiveCategory(state.category)
+    }
+  }, [location.state])
 
   const reportsWithCategory = useMemo(
     () =>
@@ -105,6 +117,22 @@ export const ArchivePage: React.FC = () => {
 
   const groupedReports = useMemo(() => groupByMonth(filteredReports), [filteredReports])
 
+  const handleBackfillReports = async () => {
+    setBackfillStatus('running')
+    setBackfillMessage(null)
+    try {
+      const result = await api.backfillReports(20)
+      await Promise.all([refreshReports(), refreshMetrics()])
+      setBackfillMessage(
+        `已解析 ${result.processed} 份，跳过 ${result.skipped} 份，失败 ${result.failed} 份。`,
+      )
+    } catch (err) {
+      setBackfillMessage(err instanceof Error ? err.message : '解析历史报告失败')
+    } finally {
+      setBackfillStatus('idle')
+    }
+  }
+
   return (
     <div className="space-y-5 bg-slate-50 px-4 pb-12 pt-5 md:px-8">
       <div className="flex items-start justify-between gap-4">
@@ -112,13 +140,29 @@ export const ArchivePage: React.FC = () => {
           <h1 className="text-2xl font-semibold text-slate-900">健康资料库</h1>
           <p className="mt-1 text-sm text-slate-500">按分类、来源和时间整理报告资料。</p>
         </div>
-        <button
-          onClick={() => navigate('/import')}
-          className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white transition hover:bg-primary-dark"
-        >
-          导入
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={handleBackfillReports}
+            disabled={backfillStatus === 'running'}
+            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <FaBrain />
+            {backfillStatus === 'running' ? '解析中' : '解析历史'}
+          </button>
+          <button
+            onClick={() => navigate('/import')}
+            className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white transition hover:bg-primary-dark"
+          >
+            导入
+          </button>
+        </div>
       </div>
+
+      {backfillMessage ? (
+        <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-sm font-semibold text-primary">
+          {backfillMessage}
+        </div>
+      ) : null}
 
       <section className="rounded-lg border border-slate-200 bg-white p-4">
         <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500 focus-within:border-primary focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/10">
