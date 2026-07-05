@@ -7,6 +7,9 @@ services:
     restart: unless-stopped
     env_file:
       - ./.env.production
+    user: "0:0"
+    volumes:
+      - /vol2/1000/cloudreve/uploads:/cloudreve/uploads:ro
     ports:
       - "8080:8080"
     depends_on:

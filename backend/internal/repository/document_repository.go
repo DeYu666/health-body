@@ -25,6 +25,8 @@ type DocumentRepository interface {
 	List(ctx context.Context, filter DocumentFilter) ([]models.HealthDocument, int64, error)
 	CountOpenReviewTasks(ctx context.Context, documentID uuid.UUID) (int64, error)
 	ExistsForLegacyReport(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) (bool, error)
+	LegacyReportNeedsOCRRetry(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) (bool, error)
+	DeleteForLegacyReport(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) error
 }
 
 type documentRepository struct {
@@ -174,4 +176,55 @@ func (r *documentRepository) ExistsForLegacyReport(ctx context.Context, userID u
 		Where("user_id = ? AND metadata ->> 'legacyReportId' = ?", userID, reportID.String()).
 		Count(&count).Error
 	return count > 0, err
+}
+
+func (r *documentRepository) LegacyReportNeedsOCRRetry(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) (bool, error) {
+	type result struct {
+		Count     int64
+		TextCount int64
+		ErrorRows int64
+	}
+	var res result
+	err := r.db.WithContext(ctx).
+		Model(&models.HealthDocument{}).
+		Select(`
+			COUNT(DISTINCT health_documents.id) AS count,
+			COUNT(CASE WHEN length(coalesce(ocr_results.raw_text, '')) > 0 THEN 1 END) AS text_count,
+			COUNT(CASE WHEN ocr_results.pages_json::text LIKE '%"error"%' THEN 1 END) AS error_rows
+		`).
+		Joins("LEFT JOIN ocr_results ON ocr_results.document_id = health_documents.id").
+		Where("health_documents.user_id = ? AND health_documents.metadata ->> 'legacyReportId' = ?", userID, reportID.String()).
+		Scan(&res).Error
+	if err != nil {
+		return false, err
+	}
+	return res.Count > 0 && res.TextCount == 0 && res.ErrorRows > 0, nil
+}
+
+func (r *documentRepository) DeleteForLegacyReport(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		base := tx.Model(&models.HealthDocument{}).
+			Select("id").
+			Where("user_id = ? AND metadata ->> 'legacyReportId' = ?", userID, reportID.String())
+
+		if err := tx.Where("document_id IN (?)", base).Delete(&models.DocumentFile{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("document_id IN (?)", base).Delete(&models.OCRResult{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("document_id IN (?)", base).Delete(&models.AIAnalysis{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("document_id IN (?)", base).Delete(&models.ReviewTask{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("document_id IN (?)", base).Delete(&models.ExtractedObservation{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ? AND metadata ->> 'legacyReportId' = ?", userID, reportID.String()).Delete(&models.HealthDocument{}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
 }

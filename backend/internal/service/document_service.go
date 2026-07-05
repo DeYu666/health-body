@@ -344,10 +344,32 @@ func (s *documentService) BackfillReports(ctx context.Context, userID uuid.UUID,
 			continue
 		}
 		if exists {
-			item.Status = "skipped"
-			result.Skipped++
-			result.Items = append(result.Items, item)
-			continue
+			retry, err := s.repo.LegacyReportNeedsOCRRetry(ctx, userID, report.ID)
+			if err != nil {
+				item.Status = "failed"
+				item.Error = err.Error()
+				result.Failed++
+				result.Items = append(result.Items, item)
+				continue
+			}
+			if retry {
+				if err := s.repo.DeleteForLegacyReport(ctx, userID, report.ID); err != nil {
+					item.Status = "failed"
+					item.Error = err.Error()
+					result.Failed++
+					result.Items = append(result.Items, item)
+					continue
+				}
+			} else {
+				item.Status = "skipped"
+				result.Skipped++
+				result.Items = append(result.Items, item)
+				continue
+			}
+		}
+
+		if exists {
+			item.Status = "retrying"
 		}
 
 		importInput := importInputFromReport(report)

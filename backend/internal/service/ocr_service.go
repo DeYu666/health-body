@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -39,11 +40,12 @@ type noopOCRProcessor struct {
 }
 
 type httpOCRProcessor struct {
-	endpoint     string
-	provider     string
-	timeout      time.Duration
-	maxFileBytes int64
-	client       *http.Client
+	endpoint            string
+	provider            string
+	timeout             time.Duration
+	maxFileBytes        int64
+	cloudreveUploadsDir string
+	client              *http.Client
 }
 
 type ocrWorkerResponse struct {
@@ -72,11 +74,12 @@ func NewOCRProcessor(cfg *config.Config) OCRProcessor {
 		maxFileBytes = 25 * 1024 * 1024
 	}
 	return &httpOCRProcessor{
-		endpoint:     strings.TrimSpace(cfg.OCR.Endpoint),
-		provider:     provider,
-		timeout:      timeout,
-		maxFileBytes: maxFileBytes,
-		client:       &http.Client{Timeout: timeout},
+		endpoint:            strings.TrimSpace(cfg.OCR.Endpoint),
+		provider:            provider,
+		timeout:             timeout,
+		maxFileBytes:        maxFileBytes,
+		cloudreveUploadsDir: strings.TrimSpace(cfg.OCR.CloudreveUploadsDir),
+		client:              &http.Client{Timeout: timeout},
 	}
 }
 
@@ -228,11 +231,17 @@ func (p *httpOCRProcessor) downloadFile(ctx context.Context, file ImportDocument
 	}
 	resp, err := p.client.Do(req)
 	if err != nil {
+		if data, contentType, localErr := p.readCloudreveLocalFile(fileURL); localErr == nil {
+			return data, contentType, nil
+		}
 		return nil, "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		if data, contentType, localErr := p.readCloudreveLocalFile(fileURL); localErr == nil {
+			return data, contentType, nil
+		}
 		return nil, "", fmt.Errorf("download failed: %s", resp.Status)
 	}
 	if resp.ContentLength > p.maxFileBytes {
@@ -252,6 +261,51 @@ func (p *httpOCRProcessor) downloadFile(ctx context.Context, file ImportDocument
 	}
 
 	return data, resp.Header.Get("Content-Type"), nil
+}
+
+func (p *httpOCRProcessor) readCloudreveLocalFile(fileURL string) ([]byte, string, error) {
+	if p.cloudreveUploadsDir == "" {
+		return nil, "", fmt.Errorf("cloudreve local root is not configured")
+	}
+	targetName := fileNameFromURL(fileURL)
+	if targetName == "" || targetName == "document" {
+		return nil, "", fmt.Errorf("cloudreve local filename is unavailable")
+	}
+
+	var matchedPath string
+	err := filepath.WalkDir(p.cloudreveUploadsDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		name := entry.Name()
+		if name == targetName || strings.HasSuffix(name, "_"+targetName) {
+			matchedPath = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	if matchedPath == "" {
+		return nil, "", fmt.Errorf("cloudreve local file not found")
+	}
+
+	info, err := os.Stat(matchedPath)
+	if err != nil {
+		return nil, "", err
+	}
+	if info.Size() > p.maxFileBytes {
+		return nil, "", fmt.Errorf("file exceeds ocr max size")
+	}
+	data, err := os.ReadFile(matchedPath)
+	if err != nil {
+		return nil, "", err
+	}
+	return data, normalizeMimeType("", "", matchedPath), nil
 }
 
 func newEmptyOCRExtraction() OCRExtraction {
