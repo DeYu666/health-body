@@ -4,6 +4,18 @@ This repository hosts a mobile-first personal health record (PHR) web applicatio
 
 > AI-native product redesign: see [`docs/ai-native-business-design.md`](docs/ai-native-business-design.md).
 
+### Apple 健康数据与归档体验
+
+- 首页或导入页进入“日常身体数据”（`/health-data`），选择 Apple 健康导出的 XML/ZIP，预览后确认归属成员再保存。
+- 支持心率、静息/步行平均心率、HRV SDNN、体重、体脂率、血氧、步数和活动能量。不同来源、设备分别展示，睡眠及运动详情暂不导入；这是历史追加导入，不是自动同步。
+- 原始数值/单位、起止时间/时区和标准化值保存在独立 `wearable_samples` 表；重复导入跳过相同样本。文件不送 OCR/AI，不进入报告文件存储。
+- 多张报告图片可选“同一报告多页”或“分别归档”；结果页入口保留在导入回执中，成员归属以用户选择为准。
+- 趋势默认包含全部历史，缺失舒张压留空。文本预填按指标旁的数值解析，发现多项或不支持的单位时要求核对。
+
+启动后端会 AutoMigrate 新表；手动迁移对应 `backend/migrations/009_add_wearable_samples.sql`。新接口要求有效 Bearer JWT：`POST /api/v1/wearables/apple-health/import`（multipart：`file`、`memberId`、`mode=preview|import`），`GET /api/v1/wearables/days`（`memberId`、`startDate`、`endDate`，最多一年）。
+
+接入方式、限制与自动同步后续路线见 [Apple 健康接入说明](docs/apple-health-integration.md)。验证命令：前端 `npm test`（Node.js 22.18+）、`npm run lint`、`npm run build`；后端 `go test ./...`、`go vet ./...`。真实 Apple 导出兼容性、数据库落库及手机界面仍需部署后验收。
+
 ### Key Capabilities
 
 - **Authentication flows** – email + password login and registration. PIN entry is hidden until the full local unlock flow is implemented.

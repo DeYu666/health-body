@@ -11,6 +11,7 @@ import { MetricTrendPage } from './pages/MetricTrendPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { ReportDetailPage } from './pages/ReportDetailPage'
 import { UploadPage } from './pages/UploadPage'
+import { HealthDataPage } from './pages/HealthDataPage'
 
 const AppRoutes = () => {
   const { isAuthenticated } = useAuth()
@@ -26,6 +27,7 @@ const AppRoutes = () => {
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/archive" element={<ArchivePage />} />
           <Route path="/import" element={<UploadPage />} />
+          <Route path="/health-data" element={<HealthDataPage />} />
           <Route path="/upload" element={<Navigate to="/import" replace />} />
           <Route path="/metrics/new" element={<MetricEntryPage />} />
           <Route path="/metrics/trends" element={<MetricTrendPage />} />

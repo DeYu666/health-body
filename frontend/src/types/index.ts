@@ -2,6 +2,7 @@ export type ReportFileType = 'pdf' | 'image' | 'other'
 
 export interface Report {
   id: string
+  memberId?: string
   title: string
   hospital: string
   reportDate: string
@@ -19,6 +20,7 @@ export type MetricType = string
 
 export interface MetricEntry {
   id: string
+  memberId?: string
   metricType: MetricType
   primaryValue: number
   secondaryValue?: number
@@ -64,15 +66,34 @@ export interface ParsedDocumentObservation {
   reviewStatus: string
 }
 
+export interface ParsedDocumentMedication {
+  id: string
+  name: string
+  genericName: string
+  specification: string
+  dose: string
+  frequency: string
+  route: string
+  duration: string
+  quantity: string
+  instructions: string
+  confidence?: number
+  reviewStatus: string
+}
+
 export interface ParsedHealthDocument {
   id: string
+  memberId?: string
   title: string
   category: string
+  categories?: string[]
   subcategory?: string
   sourceType: string
   status: string
   organization: string
   department: string
+  subjectName: string
+  reportType: string
   documentDate?: string
   summary: string
   aiConclusion: string
@@ -80,6 +101,7 @@ export interface ParsedHealthDocument {
   reviewTaskCount: number
   ocrResults?: ParsedDocumentOCRResult[]
   observations?: ParsedDocumentObservation[]
+  medications?: ParsedDocumentMedication[]
   createdAt: string
   updatedAt: string
 }
@@ -94,6 +116,7 @@ export interface QuickMetric {
 }
 
 export interface UploadPayload {
+  memberId?: string
   title: string
   hospital: string
   reportDate: string
@@ -103,6 +126,15 @@ export interface UploadPayload {
   files?: File[] // Support multiple files
 }
 
+export interface FamilyMember {
+  id: string
+  name: string
+  relationship: string
+  gender?: string
+  birthDate?: string
+  isSelf: boolean
+}
+
 export interface ReportFile {
   id: string
   fileType: string
@@ -110,4 +142,30 @@ export interface ReportFile {
   fileUrl: string
   previewUrl?: string
   displayOrder: number
+  rotation: number
+}
+
+export interface WearableImportResult {
+  supported: number
+  unsupported: number
+  invalid: number
+  duplicates: number
+  imported: number
+  startDate: string
+  endDate: string
+  metrics: string[]
+  sources: string[]
+  committed: boolean
+}
+
+export interface WearableDay {
+  metricType: string
+  source: string
+  device: string
+  unit: string
+  date: string
+  value: number
+  min: number
+  max: number
+  count: number
 }

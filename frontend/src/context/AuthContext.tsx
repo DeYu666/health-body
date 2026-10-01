@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useState } from 'react'
 import { api, type AuthToken } from '../lib/api'
 
@@ -37,6 +38,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   })
 
   const isPinEnabled = user?.pinEnabled ?? false
+
+  useEffect(() => {
+    const expire = () => {
+      setIsAuthenticated(false)
+      setUser(null)
+    }
+    window.addEventListener('phr:session-expired', expire)
+    return () => window.removeEventListener('phr:session-expired', expire)
+  }, [])
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -140,4 +150,3 @@ export const useAuth = () => {
   }
   return context
 }
-

@@ -1,16 +1,22 @@
+/* eslint-disable react-refresh/only-export-components */
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
-  useMemo,
   useState,
 } from 'react'
 import { api } from '../lib/api'
-import type { MetricEntry, MetricSeries, Report, UploadPayload } from '../types'
+import type { FamilyMember, MetricEntry, MetricSeries, Report, UploadPayload } from '../types'
 import { useAuth } from './AuthContext'
 
 interface AppStateContextValue {
   reports: Report[]
+  members: FamilyMember[]
+  activeMember?: FamilyMember
+  selectedMemberId: string
+  setSelectedMemberId: (memberId: string) => void
+  createMember: (input: { name: string; relationship: string }) => Promise<FamilyMember>
   metricSeries: MetricSeries[]
   loading: boolean
   error: string | null
@@ -33,28 +39,31 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   const { isAuthenticated } = useAuth()
   const [reports, setReports] = useState<Report[]>([])
+  const [members, setMembers] = useState<FamilyMember[]>([])
+  const [selectedMemberId, setSelectedMemberId] = useState('')
   const [metrics, setMetrics] = useState<MetricSeries[]>([])
   const [loading, setLoading] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
 
-  const loadReports = async () => {
+  const loadReports = useCallback(async () => {
     if (!isAuthenticated) return
 
     try {
       setLoading(true)
       setError(null)
-      const response = await api.listReports({ limit: 100 })
+      const response = await api.listReports({ memberId: selectedMemberId || undefined, limit: 100 })
       // Convert API response to frontend Report type using mapReportFromApi logic
       const reports: Report[] = response.items.map((item) => {
         // Convert single file to files array if files array doesn't exist
         const files: Report['files'] = item.files && item.files.length > 0
-          ? item.files.map((f: any) => ({
+          ? item.files.map((f) => ({
               id: f.id,
               fileType: f.fileType,
               fileSizeMb: f.fileSizeMb,
               fileUrl: f.fileUrl,
               previewUrl: f.previewUrl,
               displayOrder: f.displayOrder,
+              rotation: f.rotation ?? 0,
             }))
           : (item.fileUrl || item.previewUrl
               ? [
@@ -65,12 +74,14 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
                     fileUrl: item.fileUrl || '',
                     previewUrl: item.previewUrl || item.fileUrl || '',
                     displayOrder: 0,
+                    rotation: 0,
                   },
                 ]
               : undefined)
 
         return {
           id: item.id,
+          memberId: item.memberId,
           title: item.title,
           hospital: item.hospital,
           reportDate: item.reportDate,
@@ -92,15 +103,15 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     } finally {
       setLoading(false)
     }
-  }
+  }, [isAuthenticated, selectedMemberId])
 
-  const loadMetrics = async () => {
+  const loadMetrics = useCallback(async () => {
     if (!isAuthenticated) return
 
     try {
       setLoading(true)
       setError(null)
-      const entries = await api.listMetrics({ limit: 1000 })
+      const entries = await api.listMetrics({ memberId: selectedMemberId || undefined, limit: 1000 })
       const series = api.convertEntriesToSeries(entries)
       setMetrics(series)
     } catch (err) {
@@ -110,17 +121,28 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     } finally {
       setLoading(false)
     }
-  }
+  }, [isAuthenticated, selectedMemberId])
 
   useEffect(() => {
     if (isAuthenticated) {
-      loadReports()
-      loadMetrics()
+      api.listMembers().then((items) => {
+        setMembers(items)
+        setSelectedMemberId((current) => current || items[0]?.id || '')
+      }).catch((err) => setError(err instanceof Error ? err.message : '加载家庭成员失败'))
     } else {
       setReports([])
       setMetrics([])
+      setMembers([])
+      setSelectedMemberId('')
     }
   }, [isAuthenticated])
+
+  useEffect(() => {
+    if (isAuthenticated && selectedMemberId) {
+      loadReports()
+      loadMetrics()
+    }
+  }, [isAuthenticated, selectedMemberId, loadMetrics, loadReports])
 
   const addReport = async (
     payload: UploadPayload,
@@ -135,7 +157,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     try {
       setError(null)
       console.log('[AppStateContext] 调用 api.createReport')
-      const newReport = await api.createReport(payload, onProgress)
+      const newReport = await api.createReport({ ...payload, memberId: payload.memberId || selectedMemberId }, onProgress)
       console.log('[AppStateContext] api.createReport 成功', newReport)
       setReports((prev) => [newReport, ...prev])
       return newReport
@@ -164,7 +186,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
   ): Promise<MetricEntry> => {
     try {
       setError(null)
-      const newEntry = await api.createMetric(entry)
+      const newEntry = await api.createMetric({ ...entry, memberId: entry.memberId || selectedMemberId })
       
       // Update local state
       setMetrics((prev) => {
@@ -217,17 +239,23 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }
 
-  const refreshReports = async () => {
-    await loadReports()
+  const refreshReports = loadReports
+  const refreshMetrics = loadMetrics
+
+  const createMember = async (input: { name: string; relationship: string }) => {
+    const member = await api.createMember(input)
+    setMembers((current) => [...current, member])
+    setSelectedMemberId(member.id)
+    return member
   }
 
-  const refreshMetrics = async () => {
-    await loadMetrics()
-  }
-
-  const value = useMemo<AppStateContextValue>(
-    () => ({
+  const value: AppStateContextValue = {
       reports,
+      members,
+      activeMember: members.find((member) => member.id === selectedMemberId),
+      selectedMemberId,
+      setSelectedMemberId,
+      createMember,
       metricSeries: metrics,
       loading,
       error,
@@ -236,9 +264,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({
       addMetricEntry,
       refreshReports,
       refreshMetrics,
-    }),
-    [reports, metrics, loading, error],
-  )
+    }
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>
 }
@@ -250,4 +276,3 @@ export const useAppState = () => {
   }
   return context
 }
-

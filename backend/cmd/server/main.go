@@ -37,13 +37,16 @@ func main() {
 	reportRepo := repository.NewReportRepository(db)
 	metricRepo := repository.NewMetricRepository(db)
 	documentRepo := repository.NewDocumentRepository(db)
+	memberRepo := repository.NewFamilyMemberRepository(db)
 
 	authService := service.NewAuthService(cfg, userRepo)
 	reportService := service.NewReportService(reportRepo)
 	metricService := service.NewMetricService(metricRepo)
 	aiAnalyzer := service.NewAIAnalyzer(cfg)
 	ocrProcessor := service.NewOCRProcessor(cfg)
-	documentService := service.NewDocumentService(documentRepo, reportService, metricService, aiAnalyzer, ocrProcessor)
+	memberService := service.NewFamilyMemberService(memberRepo)
+	wearableService := service.NewWearableService(repository.NewWearableRepository(db), memberRepo)
+	documentService := service.NewDocumentService(documentRepo, reportService, metricService, memberService, aiAnalyzer, ocrProcessor)
 
 	uploadService, err := service.NewUploadService(cfg)
 	if err != nil {
@@ -56,11 +59,13 @@ func main() {
 
 	registry := apphttp.HandlerRegistry{
 		Auth:      handlers.NewAuthHandler(authService),
-		Reports:   handlers.NewReportHandler(reportService),
+		Reports:   handlers.NewReportHandler(reportService, cfg),
 		Metrics:   handlers.NewMetricHandler(metricService),
 		Documents: handlers.NewDocumentHandler(documentService),
 		Health:    handlers.NewHealthHandler(),
 		Upload:    handlers.NewUploadHandler(uploadService),
+		Members:   handlers.NewFamilyMemberHandler(memberService),
+		Wearables: handlers.NewWearableHandler(wearableService),
 	}
 
 	router := apphttp.NewRouter(cfg, registry)

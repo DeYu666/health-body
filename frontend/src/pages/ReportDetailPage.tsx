@@ -8,19 +8,20 @@ import {
   FaFileAlt,
   FaFilePdf,
   FaHospital,
-  FaLink,
   FaMicroscope,
+  FaPills,
+  FaPlus,
+  FaRedo,
   FaSave,
-  FaShareAlt,
-  FaShieldAlt,
   FaTimes,
   FaTrash,
+  FaUndo,
 } from 'react-icons/fa'
 import { useNavigate, useOutletContext, useParams } from 'react-router-dom'
 import type { AppShellContextValue } from '../components/layout/AppShell'
 import { useAppState } from '../context/AppStateContext'
 import { api } from '../lib/api'
-import type { ParsedDocumentObservation, ParsedHealthDocument } from '../types'
+import type { ParsedDocumentMedication, ParsedDocumentObservation, ParsedHealthDocument } from '../types'
 
 const formatConfidence = (confidence?: number) => {
   if (typeof confidence !== 'number') return '未评估'
@@ -63,17 +64,34 @@ type ObservationForm = ParsedDocumentObservation & {
   valueInput: string
 }
 
+type MedicationForm = ParsedDocumentMedication
+
 interface ReviewForm {
+  title: string
   category: string
+  categories: string[]
+  organization: string
+  department: string
+  subjectName: string
+  reportType: string
+  documentDate: string
   summary: string
   aiConclusion: string
   confidence: string
   status: string
   observations: ObservationForm[]
+  medications: MedicationForm[]
 }
 
 const buildReviewForm = (document: ParsedHealthDocument): ReviewForm => ({
+  title: document.title || '',
   category: document.category || '其他',
+  categories: document.categories?.length ? document.categories : [document.category || '其他'],
+  organization: document.organization || '',
+  department: document.department || '',
+  subjectName: document.subjectName || '',
+  reportType: document.reportType || '',
+  documentDate: document.documentDate?.slice(0, 10) || '',
   summary: document.summary || '',
   aiConclusion: document.aiConclusion || '',
   confidence: typeof document.confidence === 'number' ? String(document.confidence) : '',
@@ -85,6 +103,7 @@ const buildReviewForm = (document: ParsedHealthDocument): ReviewForm => ({
         ? String(observation.valueNumber)
         : observation.valueText,
   })),
+  medications: document.medications ?? [],
 })
 
 const parseOptionalNumber = (value: string) => {
@@ -98,7 +117,7 @@ export const ReportDetailPage: React.FC = () => {
   const { reportId } = useParams<{ reportId: string }>()
   const navigate = useNavigate()
   const { setHeaderConfig } = useOutletContext<AppShellContextValue>()
-  const { reports, deleteReport } = useAppState()
+  const { reports, deleteReport, refreshReports } = useAppState()
   const [parsedDocument, setParsedDocument] = useState<ParsedHealthDocument | null>(null)
   const [parseStatus, setParseStatus] = useState<'idle' | 'loading' | 'loaded' | 'empty' | 'error'>('idle')
   const [parseError, setParseError] = useState<string | null>(null)
@@ -106,6 +125,15 @@ export const ReportDetailPage: React.FC = () => {
   const [reviewForm, setReviewForm] = useState<ReviewForm | null>(null)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving'>('idle')
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [isEditingTitle, setIsEditingTitle] = useState(false)
+  const [titleDraft, setTitleDraft] = useState('')
+  const [titleSaveStatus, setTitleSaveStatus] = useState<'idle' | 'saving'>('idle')
+  const [titleSaveError, setTitleSaveError] = useState<string | null>(null)
+  const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({})
+  const [previewErrors, setPreviewErrors] = useState<Record<string, string>>({})
+  const [fileRotations, setFileRotations] = useState<Record<string, number>>({})
+  const [rotationSaving, setRotationSaving] = useState<Record<string, boolean>>({})
+  const [structuredAnalysis, setStructuredAnalysis] = useState<'medications' | 'observations' | null>(null)
 
   const report = useMemo(
     () => reports.find((item) => item.id === reportId),
@@ -153,6 +181,32 @@ export const ReportDetailPage: React.FC = () => {
     }
   }, [reportId, report])
 
+  useEffect(() => {
+    if (!report?.files?.length) return
+    let active = true
+    const objectUrls: string[] = []
+    report.files.filter((file) => file.fileType !== 'pdf' && !file.fileType?.includes('pdf')).forEach((file) => {
+      api.getReportFileBlob(report.id, file.id).then((blob) => {
+        if (!active) return
+        const objectUrl = URL.createObjectURL(blob)
+        objectUrls.push(objectUrl)
+        setPreviewUrls((current) => ({ ...current, [file.id]: objectUrl }))
+      }).catch((err) => {
+        if (!active) return
+        setPreviewErrors((current) => ({ ...current, [file.id]: err instanceof Error ? err.message : '预览加载失败' }))
+      })
+    })
+    return () => {
+      active = false
+      objectUrls.forEach((url) => URL.revokeObjectURL(url))
+    }
+  }, [report])
+
+  useEffect(() => {
+    if (!report?.files) return
+    setFileRotations(Object.fromEntries(report.files.map((file) => [file.id, file.rotation ?? 0])))
+  }, [report])
+
   if (!report) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4 bg-white px-8 py-12 text-center">
@@ -163,7 +217,7 @@ export const ReportDetailPage: React.FC = () => {
         </div>
         <button
           onClick={() => navigate('/archive')}
-          className="rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-white transition hover:bg-primary-dark"
+          className="rounded-lg bg-primary px-6 py-3 text-sm font-semibold text-white transition hover:bg-primary-dark"
         >
           返回档案
         </button>
@@ -191,13 +245,55 @@ export const ReportDetailPage: React.FC = () => {
     }
   }
 
-  const handleShare = async () => {
+  const handleOpenFile = async (fileId: string) => {
     try {
-      const shareUrl = await api.shareReport(report.id)
-      await navigator.clipboard.writeText(shareUrl)
-      alert('分享链接已复制到剪贴板')
+      const blob = await api.getReportFileBlob(report.id, fileId)
+      const objectUrl = URL.createObjectURL(blob)
+      window.open(objectUrl, '_blank', 'noopener,noreferrer')
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
     } catch (err) {
-      alert(err instanceof Error ? err.message : '无法复制分享链接，请稍后重试')
+      alert(err instanceof Error ? err.message : '打开文件失败')
+    }
+  }
+
+  const handleRotateFile = async (fileId: string, delta: number) => {
+    const current = fileRotations[fileId] ?? 0
+    const next = ((current + delta) % 360 + 360) % 360
+    setFileRotations((rotations) => ({ ...rotations, [fileId]: next }))
+    setRotationSaving((saving) => ({ ...saving, [fileId]: true }))
+    try {
+      await api.updateReportFileRotation(report.id, fileId, next)
+    } catch (err) {
+      setFileRotations((rotations) => ({ ...rotations, [fileId]: current }))
+      alert(err instanceof Error ? err.message : '保存旋转角度失败')
+    } finally {
+      setRotationSaving((saving) => ({ ...saving, [fileId]: false }))
+    }
+  }
+
+  const handleStartEditTitle = () => {
+    setTitleDraft(report.title)
+    setTitleSaveError(null)
+    setIsEditingTitle(true)
+  }
+
+  const handleSaveTitle = async () => {
+    const title = titleDraft.trim()
+    if (!title) {
+      setTitleSaveError('标题不能为空')
+      return
+    }
+
+    setTitleSaveStatus('saving')
+    setTitleSaveError(null)
+    try {
+      await api.updateReport(report.id, { title })
+      await refreshReports()
+      setIsEditingTitle(false)
+    } catch (err) {
+      setTitleSaveError(err instanceof Error ? err.message : '修改标题失败，请稍后重试')
+    } finally {
+      setTitleSaveStatus('idle')
     }
   }
 
@@ -232,13 +328,90 @@ export const ReportDetailPage: React.FC = () => {
     })
   }
 
+  const addObservationForm = () => {
+    setReviewForm((prev) => {
+      if (!prev) return prev
+      const newObservation: ObservationForm = {
+        id: `new-${Date.now()}`,
+        name: '',
+        normalizedName: '',
+        code: '',
+        valueText: '',
+        valueInput: '',
+        unit: '',
+        referenceText: '',
+        abnormalFlag: 'normal',
+        reviewStatus: 'pending',
+        confidence: parsedDocument?.confidence,
+      }
+      return {
+        ...prev,
+        observations: [...prev.observations, newObservation],
+      }
+    })
+  }
+
+  const addMedicationForm = () => {
+    setReviewForm((prev) => prev ? {
+      ...prev,
+      medications: [...prev.medications, {
+        id: `new-medication-${Date.now()}`,
+        name: '', genericName: '', specification: '', dose: '', frequency: '', route: '',
+        duration: '', quantity: '', instructions: '', reviewStatus: 'pending',
+        confidence: parsedDocument?.confidence,
+      }],
+    } : prev)
+  }
+
+  const updateMedicationForm = (index: number, field: keyof MedicationForm, value: string) => {
+    setReviewForm((prev) => prev ? {
+      ...prev,
+      medications: prev.medications.map((medication, currentIndex) =>
+        currentIndex === index ? { ...medication, [field]: value } : medication,
+      ),
+    } : prev)
+  }
+
+  const handleStructuredAnalysis = async (kind: 'medications' | 'observations') => {
+    if (!parsedDocument) return
+    setStructuredAnalysis(kind)
+    setSaveError(null)
+    try {
+      const result = await api.analyzeDocumentStructured(parsedDocument.id, kind)
+      setReviewForm((prev) => {
+        if (!prev) return prev
+        if (kind === 'medications') {
+          return { ...prev, medications: result.medications ?? [] }
+        }
+        return {
+          ...prev,
+          observations: (result.observations ?? []).map((observation) => ({
+            ...observation,
+            valueInput: typeof observation.valueNumber === 'number' ? String(observation.valueNumber) : observation.valueText,
+          })),
+        }
+      })
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'AI 结构化解析失败')
+    } finally {
+      setStructuredAnalysis(null)
+    }
+  }
+
   const handleSaveReview = async () => {
     if (!parsedDocument || !reviewForm) return
     setSaveStatus('saving')
     setSaveError(null)
     try {
       const updated = await api.updateDocumentReview(parsedDocument.id, {
+        title: reviewForm.title,
         category: reviewForm.category,
+        categories: reviewForm.categories,
+        organization: reviewForm.organization,
+        department: reviewForm.department,
+        subjectName: reviewForm.subjectName,
+        reportType: reviewForm.reportType,
+        documentDate: reviewForm.documentDate ? dayjs(reviewForm.documentDate).toISOString() : undefined,
         summary: reviewForm.summary,
         aiConclusion: reviewForm.aiConclusion,
         confidence: parseOptionalNumber(reviewForm.confidence),
@@ -258,6 +431,19 @@ export const ReportDetailPage: React.FC = () => {
           confidence: observation.confidence,
           reviewStatus: observation.reviewStatus,
         })),
+        medications: reviewForm.medications.map((medication) => ({
+          name: medication.name,
+          genericName: medication.genericName,
+          specification: medication.specification,
+          dose: medication.dose,
+          frequency: medication.frequency,
+          route: medication.route,
+          duration: medication.duration,
+          quantity: medication.quantity,
+          instructions: medication.instructions,
+          confidence: medication.confidence,
+          reviewStatus: medication.reviewStatus,
+        })),
       })
       setParsedDocument(updated)
       setReviewForm(buildReviewForm(updated))
@@ -272,11 +458,53 @@ export const ReportDetailPage: React.FC = () => {
   const PreviewIcon = report.fileType === 'pdf' ? FaFilePdf : FaFileAlt
   const latestOCR = parsedDocument?.ocrResults?.[0]
   const observations = parsedDocument?.observations ?? []
+  const medications = parsedDocument?.medications ?? []
 
   return (
-    <div className="space-y-6 bg-white px-4 pb-14 pt-6 md:px-8">
-      <section className="rounded-2xl bg-slate-50 p-4 shadow-inner">
-        <h1 className="text-xl font-semibold text-slate-900">{report.title}</h1>
+    <div className="mx-auto max-w-7xl space-y-6 bg-slate-50 px-4 pb-14 pt-5 md:px-6 lg:px-8">
+      <section className="rounded-lg bg-slate-50 p-4 shadow-inner">
+        <div className="flex items-start gap-2">
+          {isEditingTitle ? (
+            <div className="min-w-0 flex-1 space-y-2">
+              <input
+                value={titleDraft}
+                onChange={(event) => setTitleDraft(event.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xl font-semibold text-slate-900 outline-none focus:border-primary"
+                aria-label="报告标题"
+              />
+              {titleSaveError ? <p className="text-xs text-red-600">{titleSaveError}</p> : null}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleSaveTitle}
+                  disabled={titleSaveStatus === 'saving'}
+                  className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+                >
+                  {titleSaveStatus === 'saving' ? '保存中' : '保存'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsEditingTitle(false)}
+                  className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-slate-600"
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <h1 className="min-w-0 flex-1 text-xl font-semibold text-slate-900">{report.title}</h1>
+              <button
+                type="button"
+                onClick={handleStartEditTitle}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 transition hover:bg-primary hover:text-white"
+                aria-label="修改报告标题"
+              >
+                <FaEdit />
+              </button>
+            </>
+          )}
+        </div>
         <div className="mt-3 space-y-2 text-sm text-slate-600">
           <p className="flex items-center gap-2">
             <FaHospital className="text-primary" />
@@ -303,17 +531,17 @@ export const ReportDetailPage: React.FC = () => {
           ))}
         </div>
         {report.notes ? (
-          <div className="mt-4 rounded-2xl bg-white px-4 py-3 text-sm text-slate-600">
+          <div className="mt-4 rounded-lg bg-white px-4 py-3 text-sm text-slate-600">
             <strong className="text-slate-800">备注：</strong>
             {report.notes}
           </div>
         ) : null}
       </section>
 
-      <section className="space-y-4 rounded-2xl bg-slate-50 p-4">
+      <section className="space-y-4 rounded-lg bg-slate-50 p-4">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
               <FaBrain />
             </div>
             <div>
@@ -350,45 +578,70 @@ export const ReportDetailPage: React.FC = () => {
         </div>
 
         {parseStatus === 'loading' ? (
-          <div className="rounded-xl bg-white px-4 py-3 text-sm text-slate-500">
+          <div className="rounded-lg bg-white px-4 py-3 text-sm text-slate-500">
             正在读取 OCR/AI 解析结果...
           </div>
         ) : null}
 
         {parseStatus === 'empty' ? (
-          <div className="rounded-xl bg-white px-4 py-3 text-sm text-slate-500">
+          <div className="rounded-lg bg-white px-4 py-3 text-sm text-slate-500">
             暂无 OCR/AI 解析结果，可回到档案页点击“解析历史”生成。
           </div>
         ) : null}
 
         {parseStatus === 'error' ? (
-          <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+          <div className="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
             {parseError}
           </div>
         ) : null}
 
         {parsedDocument && reviewForm && isEditingReview ? (
           <div className="space-y-3">
-            <div className="rounded-xl bg-white p-4">
-              <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-lg bg-white p-4">
+              <div className="grid gap-3 md:grid-cols-2">
+                {([
+                  ['title', '报告标题'],
+                  ['subjectName', '姓名（OCR 候选）'],
+                  ['reportType', '报告类型'],
+                  ['organization', '医院 / 机构'],
+                  ['department', '科室'],
+                ] as const).map(([field, label]) => (
+                  <label key={field} className="text-xs font-semibold text-slate-500">
+                    {label}
+                    <input value={reviewForm[field]} onChange={(event) => setReviewForm((prev) => prev ? { ...prev, [field]: event.target.value } : prev)} className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800" />
+                  </label>
+                ))}
                 <label className="text-xs font-semibold text-slate-500">
-                  分类
-                  <select
-                    value={reviewForm.category}
-                    onChange={(event) =>
-                      setReviewForm((prev) =>
-                        prev ? { ...prev, category: event.target.value } : prev,
-                      )
-                    }
-                    className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
-                  >
-                    {categoryOptions.map((category) => (
-                      <option key={category} value={category}>
-                        {category}
-                      </option>
-                    ))}
-                  </select>
+                  报告日期
+                  <input type="date" value={reviewForm.documentDate} onChange={(event) => setReviewForm((prev) => prev ? { ...prev, documentDate: event.target.value } : prev)} className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800" />
                 </label>
+              </div>
+              <div className="grid gap-3 md:grid-cols-3">
+                <fieldset className="text-xs font-semibold text-slate-500 md:col-span-3">
+                  <legend>分类（可多选）</legend>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {categoryOptions.map((category) => {
+                      const checked = reviewForm.categories.includes(category)
+                      return (
+                        <label key={category} className={`cursor-pointer rounded-lg border px-3 py-2 text-sm transition ${checked ? 'border-primary bg-primary/10 text-primary' : 'border-slate-200 bg-white text-slate-600'}`}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => setReviewForm((prev) => {
+                              if (!prev) return prev
+                              let categories = checked ? prev.categories.filter((item) => item !== category) : [...prev.categories.filter((item) => item !== '其他'), category]
+                              if (category === '其他' && !checked) categories = ['其他']
+                              if (categories.length === 0) categories = ['其他']
+                              return { ...prev, categories, category: categories[0] }
+                            })}
+                            className="sr-only"
+                          />
+                          {category}
+                        </label>
+                      )
+                    })}
+                  </div>
+                </fieldset>
                 <label className="text-xs font-semibold text-slate-500">
                   状态
                   <select
@@ -452,13 +705,23 @@ export const ReportDetailPage: React.FC = () => {
               </label>
             </div>
 
-            {reviewForm.observations.length > 0 ? (
-              <div className="rounded-xl bg-white p-4">
-                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800">
-                  <FaMicroscope className="text-primary" />
-                  校验结构化指标
+            <div className="rounded-lg bg-white p-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                    <FaMicroscope className="text-primary" />
+                    校验结构化指标
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" disabled={structuredAnalysis !== null} onClick={() => handleStructuredAnalysis('observations')} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white transition hover:bg-primary-dark disabled:opacity-60">
+                      <FaBrain /> {structuredAnalysis === 'observations' ? '解析中…' : 'AI 解析'}
+                    </button>
+                    <button type="button" onClick={addObservationForm} className="flex items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-2 text-xs font-semibold text-primary transition hover:bg-primary hover:text-white">
+                      <FaPlus /> 增加指标
+                    </button>
+                  </div>
                 </div>
-                <div className="space-y-3">
+                {reviewForm.observations.length > 0 ? (
+                  <div className="space-y-3">
                   {reviewForm.observations.map((observation, index) => (
                     <div key={`${observation.id}-${index}`} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
                       <div className="grid gap-3 md:grid-cols-[1.2fr_1fr_0.8fr]">
@@ -527,12 +790,53 @@ export const ReportDetailPage: React.FC = () => {
                       </div>
                     </div>
                   ))}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                    暂无结构化指标，可点击“增加指标”手动补充。
+                  </div>
+                )}
+            </div>
+
+            {(reviewForm.categories.includes('用药') || reviewForm.medications.length > 0) ? (
+              <div className="rounded-lg bg-white p-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                    <FaPills className="text-primary" />
+                    校验处方用药
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" disabled={structuredAnalysis !== null} onClick={() => handleStructuredAnalysis('medications')} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white transition hover:bg-primary-dark disabled:opacity-60">
+                      <FaBrain /> {structuredAnalysis === 'medications' ? '解析中…' : 'AI 解析'}
+                    </button>
+                    <button type="button" onClick={addMedicationForm} className="flex items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-2 text-xs font-semibold text-primary transition hover:bg-primary hover:text-white">
+                      <FaPlus /> 增加药品
+                    </button>
+                  </div>
                 </div>
+                {reviewForm.medications.length > 0 ? (
+                  <div className="space-y-3">
+                    {reviewForm.medications.map((medication, index) => (
+                      <div key={`${medication.id}-${index}`} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                        <div className="grid gap-3 md:grid-cols-3">
+                          {([['name', '药品名称'], ['genericName', '通用名'], ['specification', '规格'], ['dose', '单次剂量'], ['frequency', '频次'], ['route', '用法'], ['duration', '疗程'], ['quantity', '数量'], ['instructions', '补充说明']] as const).map(([field, label]) => (
+                            <label key={field} className="text-xs font-semibold text-slate-500">
+                              {label}
+                              <input value={medication[field]} onChange={(event) => updateMedicationForm(index, field, event.target.value)} className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800" />
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">未识别出药品，可手动增加。</div>
+                )}
               </div>
             ) : null}
 
             {saveError ? (
-              <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+              <div className="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
                 {saveError}
               </div>
             ) : null}
@@ -541,7 +845,7 @@ export const ReportDetailPage: React.FC = () => {
               type="button"
               onClick={handleSaveReview}
               disabled={saveStatus === 'saving'}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
             >
               <FaSave />
               {saveStatus === 'saving' ? '保存中...' : '保存人工校验'}
@@ -549,11 +853,11 @@ export const ReportDetailPage: React.FC = () => {
           </div>
         ) : parsedDocument ? (
           <div className="space-y-3">
-            <div className="rounded-xl bg-white px-4 py-3 text-sm text-slate-600">
+            <div className="rounded-lg bg-white px-4 py-3 text-sm text-slate-600">
               <div className="flex flex-wrap gap-2">
-                <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">
-                  {parsedDocument.category || '未分类'}
-                </span>
+                {(parsedDocument.categories?.length ? parsedDocument.categories : [parsedDocument.category || '未分类']).map((category) => (
+                  <span key={category} className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">{category}</span>
+                ))}
                 <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">
                   {parsedDocument.status === 'ready' ? '已就绪' : '待复核'}
                 </span>
@@ -563,6 +867,19 @@ export const ReportDetailPage: React.FC = () => {
                   </span>
                 ) : null}
               </div>
+              <dl className="mt-4 grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-2 lg:grid-cols-4">
+                {[
+                  ['姓名', parsedDocument.subjectName || '未识别'],
+                  ['报告类型', parsedDocument.reportType || parsedDocument.category || '未识别'],
+                  ['机构', parsedDocument.organization || '未识别'],
+                  ['科室', parsedDocument.department || '未识别'],
+                ].map(([label, value]) => (
+                  <div key={label}>
+                    <dt className="text-xs text-slate-400">{label}</dt>
+                    <dd className="mt-1 text-sm font-semibold text-slate-800">{value}</dd>
+                  </div>
+                ))}
+              </dl>
               {parsedDocument.summary ? (
                 <p className="mt-3 leading-6">{parsedDocument.summary}</p>
               ) : null}
@@ -572,13 +889,28 @@ export const ReportDetailPage: React.FC = () => {
             </div>
 
             {observations.length > 0 ? (
-              <div className="rounded-xl bg-white p-4">
+              <div className="rounded-lg bg-white p-4">
                 <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800">
                   <FaMicroscope className="text-primary" />
                   结构化指标
                 </div>
-                <div className="grid gap-2 md:grid-cols-2">
-                  {observations.map((observation) => (
+                {parsedDocument.categories?.includes('检验') || parsedDocument.categories?.includes('体检') || parsedDocument.category === '检验' || parsedDocument.category === '体检' ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[620px] border-collapse text-left text-sm">
+                      <thead><tr className="border-b border-slate-200 text-xs text-slate-500"><th className="px-3 py-2">项目</th><th className="px-3 py-2">结果</th><th className="px-3 py-2">参考范围</th><th className="px-3 py-2">状态</th></tr></thead>
+                      <tbody>{observations.map((observation) => (
+                        <tr key={observation.id} className="border-b border-slate-100 last:border-0">
+                          <td className="px-3 py-3 font-semibold text-slate-800">{observation.name}</td>
+                          <td className="px-3 py-3 text-slate-900">{formatObservationValue(observation)}</td>
+                          <td className="px-3 py-3 text-slate-500">{observation.referenceText || '—'}</td>
+                          <td className="px-3 py-3"><span className={observation.abnormalFlag === 'high' || observation.abnormalFlag === 'low' ? 'rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700' : 'rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700'}>{abnormalFlagLabel[observation.abnormalFlag] ?? '待复核'}</span></td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="grid gap-2 md:grid-cols-2">
+                    {observations.map((observation) => (
                     <div
                       key={observation.id}
                       className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2"
@@ -602,13 +934,37 @@ export const ReportDetailPage: React.FC = () => {
                         {formatObservationValue(observation)}
                       </p>
                     </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : null}
+
+            {medications.length > 0 ? (
+              <div className="rounded-lg bg-white p-4">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800">
+                  <FaPills className="text-primary" />
+                  处方用药
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {medications.map((medication) => (
+                    <article key={medication.id} className="rounded-lg border border-slate-100 bg-slate-50 p-4">
+                      <h3 className="font-semibold text-slate-900">{medication.name}</h3>
+                      {medication.genericName ? <p className="mt-1 text-xs text-slate-500">通用名：{medication.genericName}</p> : null}
+                      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                        {([['规格', medication.specification], ['剂量', medication.dose], ['频次', medication.frequency], ['用法', medication.route], ['疗程', medication.duration], ['数量', medication.quantity]] as const).filter(([, value]) => value).map(([label, value]) => (
+                          <div key={label}><dt className="text-xs text-slate-400">{label}</dt><dd className="mt-0.5 text-slate-700">{value}</dd></div>
+                        ))}
+                      </dl>
+                      {medication.instructions ? <p className="mt-3 rounded-md bg-white px-3 py-2 text-sm text-slate-600">{medication.instructions}</p> : null}
+                    </article>
                   ))}
                 </div>
               </div>
             ) : null}
 
             {latestOCR ? (
-              <details className="rounded-xl bg-white p-4">
+              <details className="rounded-lg bg-white p-4">
                 <summary className="cursor-pointer text-sm font-semibold text-slate-800">
                   查看 OCR 原文（{latestOCR.rawText.length} 字）
                 </summary>
@@ -621,7 +977,7 @@ export const ReportDetailPage: React.FC = () => {
         ) : null}
       </section>
 
-      <section className="space-y-4 rounded-2xl bg-slate-50 p-4">
+      <section className="space-y-4 rounded-lg bg-slate-50 p-4">
         <h2 className="text-sm font-semibold text-slate-600">
           报告预览 {report.files && report.files.length > 1 ? `(${report.files.length} 个文件)` : ''}
         </h2>
@@ -630,7 +986,7 @@ export const ReportDetailPage: React.FC = () => {
             {report.files.map((file, index) => {
               const FileIconForFile = file.fileType === 'pdf' || file.fileType?.includes('pdf') ? FaFilePdf : FaFileAlt
               return (
-                <div key={file.id || index} className="overflow-hidden rounded-2xl bg-white shadow-card">
+                <div key={file.id || index} className="overflow-hidden rounded-lg bg-white shadow-sm">
                   {file.previewUrl || file.fileUrl ? (
                     file.fileType === 'pdf' || file.fileType?.includes('pdf') ? (
                       <div className="flex h-72 items-center justify-center bg-slate-100">
@@ -640,30 +996,19 @@ export const ReportDetailPage: React.FC = () => {
                           <p className="mt-1 text-xs text-slate-500">{file.fileSizeMb.toFixed(1)} MB</p>
                         </div>
                       </div>
+                    ) : previewUrls[file.id] ? (
+                      <div className="flex h-[min(70vh,36rem)] items-center justify-center overflow-hidden bg-slate-100">
+                        <img
+                          src={previewUrls[file.id]}
+                          alt={`${report.title} 预览 ${index + 1}`}
+                          className="h-full w-full object-contain transition-transform duration-200"
+                          style={{ transform: `rotate(${fileRotations[file.id] ?? file.rotation ?? 0}deg)` }}
+                        />
+                      </div>
                     ) : (
-                      <img
-                        src={file.previewUrl || file.fileUrl}
-                        alt={`${report.title} 预览 ${index + 1}`}
-                        className="h-72 w-full object-cover"
-                        onError={(e) => {
-                          // Fallback to icon if image fails to load
-                          const target = e.target as HTMLImageElement
-                          target.style.display = 'none'
-                          const parent = target.parentElement
-                          if (parent) {
-                            parent.innerHTML = `
-                              <div class="flex h-72 items-center justify-center bg-slate-100">
-                                <div class="text-center">
-                                  <svg class="mx-auto h-16 w-16 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
-                                  </svg>
-                                  <p class="mt-2 text-sm font-semibold text-slate-700">文件预览</p>
-                                </div>
-                              </div>
-                            `
-                          }
-                        }}
-                      />
+                      <div className="flex h-72 items-center justify-center bg-slate-100 px-6 text-center text-sm text-slate-500">
+                        {previewErrors[file.id] || '正在安全加载预览…'}
+                      </div>
                     )
                   ) : (
                     <div className="flex h-72 items-center justify-center bg-slate-100">
@@ -675,81 +1020,68 @@ export const ReportDetailPage: React.FC = () => {
                       {report.files && report.files.length > 1 ? `文件 ${index + 1} · ` : ''}
                       {file.fileSizeMb.toFixed(1)} MB · {file.fileType || '未知类型'}
                     </span>
-                    <button
-                      onClick={() => {
-                        const url = file.fileUrl || file.previewUrl
-                        if (url) {
-                          window.open(url, '_blank')
-                        }
-                      }}
-                      className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-200"
-                    >
-                      查看
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      {file.fileType !== 'pdf' && !file.fileType?.includes('pdf') ? (
+                        <>
+                          <button
+                            type="button"
+                            aria-label="向左旋转图片"
+                            title="向左旋转"
+                            disabled={rotationSaving[file.id]}
+                            onClick={() => handleRotateFile(file.id, -90)}
+                            className="rounded-full bg-slate-100 p-2 text-slate-600 transition hover:bg-slate-200 disabled:cursor-wait disabled:opacity-50"
+                          >
+                            <FaUndo />
+                          </button>
+                          <span className="min-w-8 text-center tabular-nums text-slate-400">
+                            {fileRotations[file.id] ?? file.rotation ?? 0}°
+                          </span>
+                          <button
+                            type="button"
+                            aria-label="向右旋转图片"
+                            title="向右旋转"
+                            disabled={rotationSaving[file.id]}
+                            onClick={() => handleRotateFile(file.id, 90)}
+                            className="rounded-full bg-slate-100 p-2 text-slate-600 transition hover:bg-slate-200 disabled:cursor-wait disabled:opacity-50"
+                          >
+                            <FaRedo />
+                          </button>
+                        </>
+                      ) : null}
+                      <button
+                        onClick={() => handleOpenFile(file.id)}
+                        className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-200"
+                      >
+                        查看
+                      </button>
+                    </div>
                   </div>
                 </div>
               )
             })}
           </div>
         ) : (
-          <div className="overflow-hidden rounded-2xl bg-white shadow-card">
-            <img
-              src={report.previewImageUrl}
-              alt={`${report.title} 预览`}
-              className="h-72 w-full object-cover"
-            />
-            <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
-              <span>在线预览仅供参考，原始文件保存在云端。</span>
-              <button className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-200">
-                放大查看
-              </button>
-            </div>
-          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-6 text-center text-sm text-slate-500">该报告没有关联文件。</div>
         )}
       </section>
 
-      <section className="grid grid-cols-2 gap-3">
+      <section className="grid gap-3 sm:grid-cols-2">
         <button
           onClick={handleDownload}
-          className="flex items-center justify-center gap-2 rounded-2xl bg-primary py-3 text-sm font-semibold text-white shadow-card transition hover:bg-primary-dark"
+          className="flex items-center justify-center gap-2 rounded-lg bg-primary py-3 text-sm font-semibold text-white transition hover:bg-primary-dark"
         >
           <FaDownload />
           下载
         </button>
         <button
-          onClick={handleShare}
-          className="flex items-center justify-center gap-2 rounded-2xl bg-slate-100 py-3 text-sm font-semibold text-slate-600 transition hover:bg-primary/10 hover:text-primary"
-        >
-          <FaShareAlt />
-          分享
-        </button>
-        <button
           onClick={handleDelete}
-          className="col-span-2 flex items-center justify-center gap-2 rounded-2xl bg-danger/10 py-3 text-sm font-semibold text-danger transition hover:bg-danger/20"
+          className="flex items-center justify-center gap-2 rounded-lg bg-danger/10 py-3 text-sm font-semibold text-danger transition hover:bg-danger/20"
         >
           <FaTrash />
           删除报告
         </button>
       </section>
 
-      <section className="space-y-3 rounded-2xl bg-slate-50 p-4">
-        <div className="flex items-start gap-3 rounded-2xl bg-white px-4 py-3 text-sm text-slate-600 shadow-card">
-          <FaLink className="mt-1 text-primary" />
-          <div>
-            <p className="font-semibold text-slate-800">分享链接（30 天内有效）</p>
-            <p className="mt-1 break-all text-xs text-slate-500">
-              https://phr.app/share/{report.id}
-            </p>
-            <p className="mt-2 text-xs text-slate-400">
-              分享链接采用访问密码加密，您可在分享后随时撤回权限。
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center justify-center gap-2 rounded-full bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-700">
-          <FaShieldAlt />
-          此报告已加密存储，仅您可访问
-        </div>
-      </section>
     </div>
   )
 }

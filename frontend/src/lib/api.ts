@@ -1,10 +1,13 @@
 import type {
+  FamilyMember,
   MetricEntry,
   MetricSeries,
   ParsedHealthDocument,
   Report,
   ReportFile,
   UploadPayload,
+  WearableDay,
+  WearableImportResult,
 } from '../types'
 
 const API_BASE_URL =
@@ -29,6 +32,7 @@ interface AuthToken {
 interface ListMetricsResponse {
   items: Array<{
     id: string
+    memberId?: string
     metricType: string
     primaryValue: number
     secondaryValue?: number
@@ -55,6 +59,7 @@ interface MetricTrendSummary {
 interface PaginatedReports {
   items: Array<{
     id: string
+    memberId?: string
     title: string
     hospital: string
     reportDate: string
@@ -71,6 +76,7 @@ interface PaginatedReports {
       fileUrl: string
       previewUrl?: string
       displayOrder: number
+      rotation?: number
     }>
     createdAt: string
     updatedAt: string
@@ -91,6 +97,8 @@ interface ImportDocumentFile {
 }
 
 interface ImportDocumentPayload {
+  fileMode?: 'report' | 'separate'
+  memberId?: string
   title?: string
   category?: string
   subcategory?: string
@@ -119,8 +127,15 @@ interface ImportedDocument {
   }
 }
 
+interface ProcessingImport {
+  status: 'processing'
+  jobId: string
+  documents: number
+}
+
 interface ParsedDocumentResponse {
   id: string
+  memberId?: string
   title: string
   category: string
   subcategory?: string
@@ -128,6 +143,8 @@ interface ParsedDocumentResponse {
   status: string
   organization: string
   department: string
+  subjectName: string
+  reportType: string
   documentDate?: string
   summary: string
   aiConclusion: string
@@ -200,7 +217,7 @@ class ApiClient {
     const token = this.getAuthToken()
     const userID = this.getUserID()
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
+      ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
     }
 
     // 合并已有的 headers
@@ -241,7 +258,7 @@ class ApiClient {
           ? `当前页面来源为 ${window.location.origin}，请确认后端 CORS_ALLOWED_ORIGINS 包含该地址，且 API 地址 ${API_BASE_URL} 可访问。`
           : `请确认后端 CORS 配置与 API 地址 ${API_BASE_URL} 正确。`
       if (err instanceof TypeError) {
-        throw new Error(`网络请求失败：${err.message}。${hint}`)
+        throw new Error(`无法连接后端或请求被网络中断：${err.message}。${hint}`)
       }
       throw err instanceof Error
         ? new Error(`${err.message}。${hint}`)
@@ -249,6 +266,7 @@ class ApiClient {
     }
 
     if (!response.ok) {
+      if (response.status === 401) window.dispatchEvent(new Event('phr:session-expired'))
       const error: ApiError = await response.json().catch(() => ({
         error: `请求失败: ${response.status} ${response.statusText}`,
       }))
@@ -301,6 +319,7 @@ class ApiClient {
 
   // Report APIs
   async listReports(params?: {
+    memberId?: string
     search?: string
     tag?: string
     hospital?: string
@@ -310,6 +329,7 @@ class ApiClient {
     offset?: number
   }): Promise<PaginatedReports> {
     const queryParams = new URLSearchParams()
+    if (params?.memberId) queryParams.append('memberId', params.memberId)
     if (params?.search) queryParams.append('search', params.search)
     if (params?.tag) queryParams.append('tag', params.tag)
     if (params?.hospital) queryParams.append('hospital', params.hospital)
@@ -327,6 +347,7 @@ class ApiClient {
   async getReport(id: string): Promise<Report> {
     const data = await this.request<{
       id: string
+      memberId?: string
       title: string
       hospital: string
       reportDate: string
@@ -457,8 +478,8 @@ class ApiClient {
 
   async importDocument(
     payload: ImportDocumentPayload,
-  ): Promise<ImportedDocument> {
-    return this.request<ImportedDocument>('/documents/import', {
+  ): Promise<ImportedDocument | ProcessingImport> {
+    return this.request<ImportedDocument | ProcessingImport>('/documents/import', {
       method: 'POST',
       body: JSON.stringify(payload),
     })
@@ -478,7 +499,14 @@ class ApiClient {
   async updateDocumentReview(
     documentId: string,
     payload: {
+      title: string
       category: string
+      categories: string[]
+      organization: string
+      department: string
+      subjectName: string
+      reportType: string
+      documentDate?: string
       summary: string
       aiConclusion: string
       confidence?: number
@@ -498,11 +526,34 @@ class ApiClient {
         confidence?: number
         reviewStatus: string
       }>
+      medications: Array<{
+        name: string
+        genericName: string
+        specification: string
+        dose: string
+        frequency: string
+        route: string
+        duration: string
+        quantity: string
+        instructions: string
+        confidence?: number
+        reviewStatus: string
+      }>
     },
   ): Promise<ParsedHealthDocument> {
     return this.request<ParsedDocumentResponse>(`/documents/${documentId}/review`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
+    })
+  }
+
+  async analyzeDocumentStructured(
+    documentId: string,
+    kind: 'medications' | 'observations',
+  ): Promise<Pick<ParsedHealthDocument, 'medications' | 'observations'>> {
+    return this.request(`/documents/${documentId}/analyze-structured`, {
+      method: 'POST',
+      body: JSON.stringify({ kind }),
     })
   }
 
@@ -587,13 +638,12 @@ class ApiClient {
       }
     } else {
       console.log('[API] 没有文件，跳过上传')
-      // 如果没有文件，使用默认预览图
-      previewUrl =
-        'https://images.unsplash.com/photo-1559757148-5c350d0d3c56?w=1200'
+      previewUrl = ''
     }
 
     // 创建报告记录
-    const requestBody: any = {
+    const requestBody: Record<string, unknown> = {
+      memberId: payload.memberId,
       title: payload.title,
       hospital: payload.hospital,
       reportDate: payload.reportDate,
@@ -636,6 +686,7 @@ class ApiClient {
         fileUrl: string
         previewUrl?: string
         displayOrder: number
+        rotation?: number
       }>
       createdAt: string
       updatedAt: string
@@ -686,27 +737,41 @@ class ApiClient {
 
   async downloadReport(id: string): Promise<void> {
     const report = await this.getReport(id)
-    // Use fileUrl if available, otherwise use previewUrl
-    const fileUrl = report.previewImageUrl || (report as any).fileUrl
-    if (fileUrl) {
-      // Create a temporary anchor element to trigger download
+    const file = report.files?.[0]
+    if (file) {
+      const blob = await this.getReportFileBlob(report.id, file.id)
+      const fileUrl = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = fileUrl
-      link.target = '_blank'
       link.download = `${report.title || 'report'}.${report.fileType === 'pdf' ? 'pdf' : 'jpg'}`
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
+      URL.revokeObjectURL(fileUrl)
     } else {
       throw new Error('报告文件不存在')
     }
   }
 
-  async shareReport(id: string): Promise<string> {
-    // For now, return a shareable link
-    // In the future, this could create a share token via API
-    const baseUrl = window.location.origin
-    return `${baseUrl}/share/${id}`
+  async getReportFileBlob(reportId: string, fileId: string): Promise<Blob> {
+    const headers: Record<string, string> = {}
+    const token = this.getAuthToken()
+    const userID = this.getUserID()
+    if (token) headers.Authorization = `Bearer ${token}`
+    if (userID) headers['X-User-ID'] = userID
+    const response = await fetch(`${API_BASE_URL}/reports/${reportId}/files/${fileId}/content`, { headers })
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: '读取报告文件失败' }))
+      throw new Error(error.error || '读取报告文件失败')
+    }
+    return response.blob()
+  }
+
+  async updateReportFileRotation(reportId: string, fileId: string, rotation: number): Promise<void> {
+    await this.request(`/reports/${reportId}/files/${fileId}/rotation`, {
+      method: 'PATCH',
+      body: JSON.stringify({ rotation }),
+    })
   }
 
   async listHospitals(): Promise<string[]> {
@@ -716,14 +781,47 @@ class ApiClient {
     return response.hospitals
   }
 
+  async listMembers(): Promise<FamilyMember[]> {
+    const response = await this.request<{ items: FamilyMember[] }>('/members')
+    return response.items
+  }
+
+  async createMember(input: Pick<FamilyMember, 'name' | 'relationship'> & Partial<Pick<FamilyMember, 'gender' | 'birthDate'>>): Promise<FamilyMember> {
+    return this.request<FamilyMember>('/members', { method: 'POST', body: JSON.stringify(input) })
+  }
+
+  async updateMember(id: string, input: Pick<FamilyMember, 'name' | 'relationship'> & Partial<Pick<FamilyMember, 'gender' | 'birthDate'>>): Promise<FamilyMember> {
+    return this.request<FamilyMember>(`/members/${id}`, { method: 'PUT', body: JSON.stringify(input) })
+  }
+
+  async deleteMember(id: string): Promise<void> {
+    await this.request(`/members/${id}`, { method: 'DELETE' })
+  }
+
   // Metric APIs
+  async importAppleHealth(file: File, memberId: string, mode: 'preview' | 'import'): Promise<WearableImportResult> {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('memberId', memberId)
+    form.append('mode', mode)
+    return this.request('/wearables/apple-health/import', { method: 'POST', body: form })
+  }
+
+  async listWearableDays(memberId: string, startDate: string, endDate: string): Promise<WearableDay[]> {
+    const query = new URLSearchParams({ memberId, startDate, endDate })
+    const result = await this.request<{ items: WearableDay[] }>(`/wearables/days?${query}`)
+    return result.items
+  }
+
   async listMetrics(params?: {
+    memberId?: string
     metricType?: string
     startDate?: string
     endDate?: string
     limit?: number
   }): Promise<MetricEntry[]> {
     const queryParams = new URLSearchParams()
+    if (params?.memberId) queryParams.append('memberId', params.memberId)
     if (params?.metricType)
       queryParams.append('metricType', params.metricType)
     if (params?.startDate) queryParams.append('startDate', params.startDate)
@@ -737,6 +835,7 @@ class ApiClient {
 
     return response.items.map((item) => ({
       id: item.id,
+      memberId: item.memberId,
       metricType: item.metricType as MetricEntry['metricType'],
       primaryValue: item.primaryValue,
       secondaryValue: item.secondaryValue,
@@ -749,6 +848,7 @@ class ApiClient {
   async createMetric(entry: Omit<MetricEntry, 'id'>): Promise<MetricEntry> {
     const data = await this.request<{
       id: string
+      memberId?: string
       metricType: string
       primaryValue: number
       secondaryValue?: number
@@ -759,6 +859,7 @@ class ApiClient {
     }>('/metrics', {
       method: 'POST',
       body: JSON.stringify({
+        memberId: entry.memberId,
         metricType: entry.metricType,
         primaryValue: entry.primaryValue,
         secondaryValue: entry.secondaryValue,
@@ -770,6 +871,7 @@ class ApiClient {
 
     return {
       id: data.id,
+      memberId: data.memberId,
       metricType: data.metricType as MetricEntry['metricType'],
       primaryValue: data.primaryValue,
       secondaryValue: data.secondaryValue,
@@ -806,6 +908,7 @@ class ApiClient {
   // Helper methods
   private mapReportFromApi(data: {
     id: string
+    memberId?: string
     title: string
     hospital: string
     reportDate: string
@@ -824,6 +927,7 @@ class ApiClient {
       fileUrl: string
       previewUrl?: string
       displayOrder: number
+      rotation?: number
     }>
   }): Report {
     // Convert single file to files array if files array doesn't exist
@@ -835,6 +939,7 @@ class ApiClient {
           fileUrl: f.fileUrl,
           previewUrl: f.previewUrl,
           displayOrder: f.displayOrder,
+          rotation: f.rotation ?? 0,
         }))
       : (data.fileUrl || data.previewUrl
           ? [
@@ -845,12 +950,14 @@ class ApiClient {
                 fileUrl: data.fileUrl || '',
                 previewUrl: data.previewUrl || data.fileUrl || '',
                 displayOrder: 0,
+                rotation: 0,
               },
             ]
           : [])
 
     return {
       id: data.id,
+      memberId: data.memberId,
       title: data.title,
       hospital: data.hospital,
       reportDate: data.reportDate,

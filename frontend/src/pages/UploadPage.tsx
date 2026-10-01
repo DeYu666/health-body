@@ -4,13 +4,11 @@ import { useLocation, useNavigate, useOutletContext } from 'react-router-dom'
 import {
   FaBrain,
   FaCamera,
-  FaCheckCircle,
   FaCloudUploadAlt,
   FaFileAlt,
   FaFileImage,
   FaFilePdf,
   FaMagic,
-  FaRegClock,
   FaTimes,
 } from 'react-icons/fa'
 import type { ChangeEvent, DragEvent as ReactDragEvent } from 'react'
@@ -31,7 +29,7 @@ const pipelineSteps = [
   { label: '文件导入', detail: '保存原始资料' },
   { label: 'OCR 识别', detail: '抽取文字与表格' },
   { label: 'AI 分类', detail: '判断报告类型' },
-  { label: '待你确认', detail: '只处理低置信度字段' },
+  { label: '查看结果', detail: '对照原件核对需要修正的内容' },
 ]
 
 const getFileIcon = (file: File) => {
@@ -46,14 +44,19 @@ export const UploadPage: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const { setHeaderConfig } = useOutletContext<AppShellContextValue>()
-  const { refreshReports } = useAppState()
+  const { refreshReports, refreshMetrics, selectedMemberId, activeMember } = useAppState()
 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [category, setCategory] = useState(categoryOptions[0].value)
+  const [fileMode, setFileMode] = useState<'report' | 'separate'>('report')
+  const [resultMessage, setResultMessage] = useState('')
+  const [resultPath, setResultPath] = useState('/archive')
+  const [backgroundProcessing, setBackgroundProcessing] = useState(false)
   const [quickNote, setQuickNote] = useState(
     () => (location.state as { note?: string } | null)?.note ?? '',
   )
   const [progress, setProgress] = useState(0)
+  const [processing, setProcessing] = useState(false)
   const [status, setStatus] = useState<'idle' | 'uploading' | 'success'>('idle')
   const [error, setError] = useState<string | null>(null)
 
@@ -113,9 +116,14 @@ export const UploadPage: React.FC = () => {
       setError('请先上传报告图片/PDF，或输入一句健康记录')
       return
     }
+    if (!selectedMemberId) {
+      setError('请先选择资料归属的家庭成员')
+      return
+    }
 
     setError(null)
     setStatus('uploading')
+    setProcessing(false)
     setProgress(0)
 
     try {
@@ -125,10 +133,10 @@ export const UploadPage: React.FC = () => {
           const file = selectedFiles[index]
           const uploadResult = await api.uploadFile(file, (fileProgress) => {
             const uploadProgress = Math.round(
-              (index / selectedFiles.length) * 80 +
-                (fileProgress / 100) * (80 / selectedFiles.length),
+              (index / selectedFiles.length) * 100 +
+                (fileProgress / 100) * (100 / selectedFiles.length),
             )
-            setProgress(Math.min(uploadProgress, 84))
+            setProgress(Math.min(uploadProgress, 100))
           })
 
           uploadedFiles.push({
@@ -140,12 +148,12 @@ export const UploadPage: React.FC = () => {
             displayOrder: index,
           })
         }
-      } else {
-        setProgress(24)
       }
 
-      setProgress((current) => Math.max(current, 88))
-      await api.importDocument({
+      setProcessing(true)
+      const result = await api.importDocument({
+        memberId: selectedMemberId,
+        fileMode,
         title: estimatedTitle,
         category,
         sourceType: selectedFiles.length > 0 ? 'upload' : 'text',
@@ -153,11 +161,16 @@ export const UploadPage: React.FC = () => {
         files: uploadedFiles,
       })
       setProgress(100)
-      await refreshReports()
+      await Promise.all([refreshReports(), refreshMetrics()])
+      const queued = 'status' in result
+      setBackgroundProcessing(queued)
+      setResultPath(!queued && result.legacyReport ? `/reports/${result.legacyReport.id}` : '/archive')
+      setResultMessage(queued
+        ? `已提交 ${result.documents} 份资料，后台正在逐份整理。可前往档案查看结果。`
+        : result.document.status === 'ready'
+          ? result.document.summary || '资料已归档，可以查看整理结果和原件。'
+          : '原始资料已保存，部分内容还需要核对。请查看结果后确认。')
       setStatus('success')
-      setTimeout(() => {
-        navigate('/archive', { replace: true })
-      }, 900)
     } catch (err) {
       setError(err instanceof Error ? err.message : '导入失败，请稍后重试')
       setStatus('idle')
@@ -166,19 +179,32 @@ export const UploadPage: React.FC = () => {
   }
 
   return (
-    <div className="space-y-5 bg-slate-50 px-4 pb-14 pt-5 md:px-8">
+    <div className="mx-auto max-w-5xl space-y-5 bg-slate-50 px-4 pb-14 pt-5 md:px-6 lg:px-8">
       <section className="rounded-lg border border-slate-200 bg-white p-4">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <FaBrain />
           </div>
           <div>
-            <h1 className="text-lg font-semibold text-slate-900">把资料交给 AI 整理</h1>
+            <h1 className="text-lg font-semibold text-slate-900">存好报告，下次需要时随手找到</h1>
             <p className="mt-1 text-sm leading-6 text-slate-500">
-              上传体检报告、化验单、影像结论或直接记录一句话。系统会先保存原始资料，再进入 OCR 和 AI 分类流程。
+              选择报告图片或 PDF，整理后查看摘要与原件。姓名识别结果不会更改你选择的归属成员。
             </p>
           </div>
         </div>
+      </section>
+
+      <button type="button" onClick={() => navigate('/health-data')} className="flex w-full items-center justify-between rounded-lg border border-cyan-200 bg-cyan-50 p-4 text-left text-sm text-cyan-900">
+        <span><strong className="block">导入 Apple 健康数据</strong><span className="mt-1 block text-xs">把手表的心率、活动与身体测量记录带进医疗本</span></span>
+        <span>前往 →</span>
+      </button>
+
+      <section className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-4">
+        <div>
+          <p className="text-xs font-semibold text-slate-500">归属成员</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">{activeMember?.name ?? '正在加载成员'}</p>
+        </div>
+        <span className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-600">{activeMember?.relationship ?? '家庭成员'}</span>
       </section>
 
       <section className="grid grid-cols-2 gap-3">
@@ -281,6 +307,13 @@ export const UploadPage: React.FC = () => {
             })}
           </div>
         ) : null}
+        {selectedFiles.length > 1 ? (
+          <fieldset className="mt-4 space-y-2 text-sm text-slate-700" disabled={status !== 'idle'}>
+            <legend className="mb-2 font-semibold">这些文件如何归档？</legend>
+            <label className="flex items-center gap-2"><input type="radio" name="file-mode" checked={fileMode === 'report'} onChange={() => setFileMode('report')} />同一份报告的多页，合并保存</label>
+            <label className="flex items-center gap-2"><input type="radio" name="file-mode" checked={fileMode === 'separate'} onChange={() => setFileMode('separate')} />不同报告，每个文件独立归档</label>
+          </fieldset>
+        ) : null}
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-4">
@@ -318,67 +351,29 @@ export const UploadPage: React.FC = () => {
         </div>
       </section>
 
-      <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="text-sm font-semibold text-slate-900">处理流程</h2>
+      <details className="rounded-lg border border-slate-200 bg-white p-4">
+        <summary className="cursor-pointer text-sm font-semibold text-slate-900">资料会怎样整理</summary>
         <div className="mt-4 space-y-3">
-          {pipelineSteps.map((step, index) => {
-            const isActive =
-              status === 'success' || (status === 'uploading' && index <= 2)
-            const isPending = status === 'idle'
-            const statusText =
-              status === 'success'
-                ? '完成'
-                : status === 'uploading'
-                  ? '处理中'
-                  : '就绪'
-            return (
+          {pipelineSteps.map((step, index) => (
               <div key={step.label} className="flex items-center gap-3">
-                <div
-                  className={clsx(
-                    'flex h-8 w-8 items-center justify-center rounded-lg text-xs font-semibold',
-                    isActive
-                      ? 'bg-emerald-50 text-emerald-600'
-                      : isPending
-                        ? 'bg-slate-100 text-slate-400'
-                        : 'bg-primary/10 text-primary',
-                  )}
-                >
-                  {isActive ? <FaCheckCircle /> : index + 1}
-                </div>
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-xs font-semibold text-slate-500">{index + 1}</div>
                 <div className="flex-1">
                   <p className="text-sm font-semibold text-slate-900">{step.label}</p>
                   <p className="text-xs text-slate-500">{step.detail}</p>
                 </div>
-                {index > 0 ? (
-                  <span className="flex items-center gap-1 text-xs text-slate-400">
-                    <FaRegClock />
-                    {statusText}
-                  </span>
-                ) : null}
               </div>
-            )
-          })}
+          ))}
         </div>
+      </details>
 
-        {status !== 'idle' ? (
-          <div className="mt-4">
-            <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-              <div
-                className={clsx('h-full rounded-full transition-all', {
-                  'bg-primary': status === 'uploading',
-                  'bg-emerald-500': status === 'success',
-                })}
-                style={{ width: `${status === 'success' ? 100 : progress}%` }}
-              />
-            </div>
-            <p className="mt-2 text-xs text-slate-500">
-              {status === 'success'
-                ? '资料已导入，OCR 与 AI 整理结果已写入档案。'
-                : `正在保存并识别资料：${progress}%`}
-            </p>
-          </div>
-        ) : null}
-      </section>
+      {status === 'uploading' ? <p role="status" className="text-sm text-slate-600">{processing ? '正在整理内容，请稍候…' : `正在上传文件 ${progress}%`}</p> : null}
+      {status === 'success' ? (
+        <section role="status" className="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+          <h2 className="font-semibold text-emerald-900">{backgroundProcessing ? '资料已提交' : '原件已保存'}</h2>
+          <p className="text-sm leading-6 text-emerald-900">{resultMessage}</p>
+          <button type="button" onClick={() => navigate(resultPath, { state: { processing: backgroundProcessing } })} className="rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-white">{backgroundProcessing ? '查看整理进度' : '查看结果与原件'}</button>
+        </section>
+      ) : null}
 
       {error ? (
         <div className="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
@@ -389,11 +384,11 @@ export const UploadPage: React.FC = () => {
       <button
         type="button"
         onClick={handleImport}
-        disabled={status === 'uploading'}
+        disabled={status !== 'idle' || !canImport || !selectedMemberId}
         className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary py-4 text-base font-semibold text-white shadow-lg shadow-primary/20 transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:bg-primary/60"
       >
         <FaBrain />
-        {status === 'uploading' ? '正在导入...' : '开始 AI 整理'}
+        {status === 'success' ? '本次资料已提交' : status === 'uploading' ? '正在导入...' : '保存并整理'}
       </button>
     </div>
   )

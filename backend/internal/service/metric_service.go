@@ -25,23 +25,25 @@ func NewMetricService(repo repository.MetricRepository) MetricService {
 }
 
 type CreateMetricInput struct {
-	MetricType     string    `json:"metricType" binding:"required"`
-	PrimaryValue   float64   `json:"primaryValue" binding:"required"`
-	SecondaryValue *float64  `json:"secondaryValue"`
-	Unit           string    `json:"unit"`
-	RecordedAt     time.Time `json:"recordedAt" binding:"required"`
-	Notes          string    `json:"notes"`
+	MemberID       *uuid.UUID `json:"memberId"`
+	MetricType     string     `json:"metricType" binding:"required"`
+	PrimaryValue   float64    `json:"primaryValue" binding:"required"`
+	SecondaryValue *float64   `json:"secondaryValue"`
+	Unit           string     `json:"unit"`
+	RecordedAt     time.Time  `json:"recordedAt" binding:"required"`
+	Notes          string     `json:"notes"`
 }
 
 type MetricDTO struct {
-	ID             uuid.UUID `json:"id"`
-	MetricType     string    `json:"metricType"`
-	PrimaryValue   float64   `json:"primaryValue"`
-	SecondaryValue *float64  `json:"secondaryValue,omitempty"`
-	Unit           string    `json:"unit"`
-	RecordedAt     time.Time `json:"recordedAt"`
-	Notes          string    `json:"notes"`
-	CreatedAt      time.Time `json:"createdAt"`
+	ID             uuid.UUID  `json:"id"`
+	MemberID       *uuid.UUID `json:"memberId,omitempty"`
+	MetricType     string     `json:"metricType"`
+	PrimaryValue   float64    `json:"primaryValue"`
+	SecondaryValue *float64   `json:"secondaryValue,omitempty"`
+	Unit           string     `json:"unit"`
+	RecordedAt     time.Time  `json:"recordedAt"`
+	Notes          string     `json:"notes"`
+	CreatedAt      time.Time  `json:"createdAt"`
 }
 
 type MetricTrendSummary struct {
@@ -61,6 +63,7 @@ type MetricPoint struct {
 func (m *metricService) Create(ctx context.Context, userID uuid.UUID, input CreateMetricInput) (*MetricDTO, error) {
 	entry := &models.MetricEntry{
 		UserID:         userID,
+		MemberID:       input.MemberID,
 		MetricType:     input.MetricType,
 		PrimaryValue:   input.PrimaryValue,
 		SecondaryValue: input.SecondaryValue,
@@ -75,6 +78,7 @@ func (m *metricService) Create(ctx context.Context, userID uuid.UUID, input Crea
 
 	return &MetricDTO{
 		ID:             entry.ID,
+		MemberID:       entry.MemberID,
 		MetricType:     entry.MetricType,
 		PrimaryValue:   entry.PrimaryValue,
 		SecondaryValue: entry.SecondaryValue,
@@ -98,6 +102,7 @@ func (m *metricService) List(ctx context.Context, filter repository.MetricFilter
 	for _, entry := range entries {
 		result = append(result, MetricDTO{
 			ID:             entry.ID,
+			MemberID:       entry.MemberID,
 			MetricType:     entry.MetricType,
 			PrimaryValue:   entry.PrimaryValue,
 			SecondaryValue: entry.SecondaryValue,

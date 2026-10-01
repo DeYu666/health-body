@@ -5,8 +5,8 @@ export default {
     extend: {
       colors: {
         primary: {
-          DEFAULT: '#3b82f6',
-          dark: '#2563eb',
+          DEFAULT: '#087F8C',
+          dark: '#066A74',
         },
         secondary: '#10b981',
         danger: '#ef4444',
@@ -21,14 +21,14 @@ export default {
         body: ['"SF Pro Text"', 'PingFang SC', 'Hiragino Sans GB', '"Microsoft YaHei"', 'system-ui', 'sans-serif'],
       },
       boxShadow: {
-        card: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-        'card-hover': '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+        card: '0 1px 2px rgba(15, 23, 42, 0.06)',
+        'card-hover': '0 8px 24px rgba(15, 23, 42, 0.08)',
       },
       borderRadius: {
-        xl: '22px',
+        xl: '8px',
       },
       backgroundImage: {
-        'gradient-hero': 'linear-gradient(180deg, #f8fafc 0%, #eef6ff 48%, #f8fafc 100%)',
+        'gradient-hero': 'linear-gradient(180deg, #f8fafc 0%, #eef7f7 48%, #f8fafc 100%)',
       },
     },
   },

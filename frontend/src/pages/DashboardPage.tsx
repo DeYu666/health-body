@@ -38,7 +38,7 @@ const formatMetricValue = (series?: MetricSeries) => {
 export const DashboardPage: React.FC = () => {
   const navigate = useNavigate()
   const { user } = useAuth()
-  const { reports, metricSeries } = useAppState()
+  const { reports, metricSeries, activeMember } = useAppState()
   const { setHeaderConfig } = useOutletContext<AppShellContextValue>()
   const [aiInput, setAiInput] = useState('')
 
@@ -47,8 +47,8 @@ export const DashboardPage: React.FC = () => {
       reports.filter(
         (report) =>
           report.tags.includes('AI待处理') ||
-          report.hospital === 'AI 待识别' ||
-          report.title.startsWith('待识别健康资料'),
+          report.tags.includes('AI待复核') ||
+          report.hospital === 'AI 待识别',
       ),
     [reports],
   )
@@ -133,11 +133,11 @@ export const DashboardPage: React.FC = () => {
   }
 
   return (
-    <div className="space-y-5 bg-slate-50 px-4 pb-10 pt-5 md:px-8">
+    <div className="mx-auto max-w-7xl space-y-6 bg-slate-50 px-4 pb-10 pt-5 md:px-6 lg:px-8">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">
-            {user?.displayName ? `${user.displayName}的健康态势` : '健康态势'}
+            {activeMember ? `${activeMember.name}的健康概览` : user?.displayName ? `${user.displayName}的家庭医疗本` : '家庭医疗本'}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
             {dayjs().format('YYYY-MM-DD')} · 重点关注资料、指标和待确认事项。
@@ -165,7 +165,7 @@ export const DashboardPage: React.FC = () => {
             <FaBrain />
           </div>
           <div className="flex-1">
-            <h2 className="text-sm font-semibold text-slate-900">AI 健康入口</h2>
+            <h2 className="text-sm font-semibold text-slate-900">快速导入</h2>
             <p className="mt-1 text-xs text-slate-500">上传、拍照或直接记录一句话。</p>
           </div>
         </div>
@@ -188,12 +188,17 @@ export const DashboardPage: React.FC = () => {
         </div>
       </section>
 
+      <button type="button" onClick={() => navigate('/health-data')} className="flex w-full items-center justify-between rounded-lg border border-cyan-200 bg-cyan-50 p-4 text-left">
+        <span><strong className="block text-sm text-cyan-900">日常身体数据</strong><span className="mt-1 block text-xs text-cyan-800">导入 Apple 健康，查看心率、体重与活动变化</span></span>
+        <FaArrowRight className="text-cyan-700" />
+      </button>
+
       <section>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-900">今日重点</h2>
           <span className="text-xs text-slate-400">可追溯到来源</span>
         </div>
-        <div className="space-y-3">
+        <div className="grid gap-3 lg:grid-cols-3">
           {insights.map((insight) => {
             const icon =
               insight.tone === 'warning'
@@ -244,12 +249,12 @@ export const DashboardPage: React.FC = () => {
               全部指标
             </button>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {quickMetrics.map((metric) => (
               <div key={metric.id} className="rounded-lg border border-slate-200 bg-white p-4">
                 <div className="text-xs font-semibold text-slate-400">{metric.label}</div>
                 <div className="mt-2 text-xl font-semibold text-slate-900">{metric.value}</div>
-                <div className="mt-2 text-xs text-slate-500">来源逐步接入报告和设备</div>
+                <div className="mt-2 text-xs text-slate-500">来源：OCR 报告或手动记录</div>
               </div>
             ))}
           </div>
@@ -266,7 +271,7 @@ export const DashboardPage: React.FC = () => {
             查看档案
           </button>
         </div>
-        <div className="space-y-3">
+        <div className="grid gap-3 lg:grid-cols-2">
           {latestReports.length > 0 ? (
             latestReports.map((report) => (
               <button

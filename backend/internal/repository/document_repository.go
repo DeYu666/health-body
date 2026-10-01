@@ -12,6 +12,7 @@ import (
 
 type DocumentFilter struct {
 	UserID   uuid.UUID
+	MemberID *uuid.UUID
 	Search   string
 	Category string
 	Status   string
@@ -21,12 +22,14 @@ type DocumentFilter struct {
 
 type DocumentRepository interface {
 	CreateWithArtifacts(ctx context.Context, document *models.HealthDocument, files []models.DocumentFile, ocrResults []models.OCRResult, analyses []models.AIAnalysis, reviewTasks []models.ReviewTask) error
+	LinkLegacyReport(ctx context.Context, userID, documentID, reportID uuid.UUID) error
 	FindByID(ctx context.Context, id uuid.UUID, userID uuid.UUID) (*models.HealthDocument, error)
 	FindByLegacyReport(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) (*models.HealthDocument, error)
 	List(ctx context.Context, filter DocumentFilter) ([]models.HealthDocument, int64, error)
 	CountOpenReviewTasks(ctx context.Context, documentID uuid.UUID) (int64, error)
 	ReplaceObservations(ctx context.Context, userID uuid.UUID, documentID uuid.UUID, observations []models.ExtractedObservation) error
-	UpdateReview(ctx context.Context, userID uuid.UUID, documentID uuid.UUID, fields map[string]any, observations []models.ExtractedObservation) error
+	ReplaceMedications(ctx context.Context, userID uuid.UUID, documentID uuid.UUID, medications []models.DocumentMedication) error
+	UpdateReview(ctx context.Context, userID uuid.UUID, documentID uuid.UUID, fields map[string]any, observations []models.ExtractedObservation, medications []models.DocumentMedication) error
 	ExistsForLegacyReport(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) (bool, error)
 	LegacyReportNeedsOCRRetry(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) (bool, error)
 	DeleteForLegacyReport(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) error
@@ -94,6 +97,16 @@ func (r *documentRepository) CreateWithArtifacts(ctx context.Context, document *
 	})
 }
 
+func (r *documentRepository) LinkLegacyReport(ctx context.Context, userID, documentID, reportID uuid.UUID) error {
+	return r.db.WithContext(ctx).
+		Model(&models.HealthDocument{}).
+		Where("id = ? AND user_id = ?", documentID, userID).
+		Update("metadata", gorm.Expr(
+			"jsonb_set(coalesce(metadata, '{}'::jsonb), '{legacyReportId}', to_jsonb(?::text), true)",
+			reportID.String(),
+		)).Error
+}
+
 func (r *documentRepository) FindByID(ctx context.Context, id uuid.UUID, userID uuid.UUID) (*models.HealthDocument, error) {
 	var document models.HealthDocument
 	err := r.db.WithContext(ctx).
@@ -107,6 +120,7 @@ func (r *documentRepository) FindByID(ctx context.Context, id uuid.UUID, userID 
 		Preload("Observations", func(db *gorm.DB) *gorm.DB {
 			return db.Order("observed_at DESC, created_at DESC")
 		}).
+		Preload("Medications", func(db *gorm.DB) *gorm.DB { return db.Order("created_at ASC") }).
 		Preload("Analyses", func(db *gorm.DB) *gorm.DB {
 			return db.Order("created_at DESC")
 		}).
@@ -130,6 +144,7 @@ func (r *documentRepository) FindByLegacyReport(ctx context.Context, userID uuid
 		Preload("Observations", func(db *gorm.DB) *gorm.DB {
 			return db.Order("observed_at DESC, created_at DESC")
 		}).
+		Preload("Medications", func(db *gorm.DB) *gorm.DB { return db.Order("created_at ASC") }).
 		Preload("Analyses", func(db *gorm.DB) *gorm.DB {
 			return db.Order("created_at DESC")
 		}).
@@ -148,6 +163,9 @@ func (r *documentRepository) List(ctx context.Context, filter DocumentFilter) ([
 	query := r.db.WithContext(ctx).
 		Model(&models.HealthDocument{}).
 		Where("user_id = ?", filter.UserID)
+	if filter.MemberID != nil {
+		query = query.Where("member_id = ?", *filter.MemberID)
+	}
 
 	if filter.Search != "" {
 		search := "%" + strings.ToLower(filter.Search) + "%"
@@ -155,7 +173,7 @@ func (r *documentRepository) List(ctx context.Context, filter DocumentFilter) ([
 	}
 
 	if filter.Category != "" {
-		query = query.Where("category = ?", filter.Category)
+		query = query.Where("category = ? OR categories @> ?::jsonb", filter.Category, `["`+filter.Category+`"]`)
 	}
 
 	if filter.Status != "" {
@@ -222,7 +240,27 @@ func (r *documentRepository) ReplaceObservations(ctx context.Context, userID uui
 	})
 }
 
-func (r *documentRepository) UpdateReview(ctx context.Context, userID uuid.UUID, documentID uuid.UUID, fields map[string]any, observations []models.ExtractedObservation) error {
+func (r *documentRepository) ReplaceMedications(ctx context.Context, userID uuid.UUID, documentID uuid.UUID, medications []models.DocumentMedication) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("user_id = ? AND document_id = ?", userID, documentID).Delete(&models.DocumentMedication{}).Error; err != nil {
+			return err
+		}
+		for i := range medications {
+			medications[i].ID = uuid.Nil
+			medications[i].UserID = userID
+			medications[i].DocumentID = documentID
+			if medications[i].ReviewStatus == "" {
+				medications[i].ReviewStatus = "pending"
+			}
+		}
+		if len(medications) == 0 {
+			return nil
+		}
+		return tx.Create(&medications).Error
+	})
+}
+
+func (r *documentRepository) UpdateReview(ctx context.Context, userID uuid.UUID, documentID uuid.UUID, fields map[string]any, observations []models.ExtractedObservation, medications []models.DocumentMedication) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&models.HealthDocument{}).
 			Where("id = ? AND user_id = ?", documentID, userID).
@@ -237,24 +275,40 @@ func (r *documentRepository) UpdateReview(ctx context.Context, userID uuid.UUID,
 		if err := tx.Where("user_id = ? AND document_id = ?", userID, documentID).Delete(&models.ExtractedObservation{}).Error; err != nil {
 			return err
 		}
-		if len(observations) == 0 {
-			return nil
+		if len(observations) > 0 {
+			for i := range observations {
+				observations[i].ID = uuid.Nil
+				observations[i].UserID = userID
+				observations[i].DocumentID = documentID
+				if observations[i].CodeSystem == "" {
+					observations[i].CodeSystem = "local"
+				}
+				if len(observations[i].SourceBBoxJSON) == 0 {
+					observations[i].SourceBBoxJSON = []byte("{}")
+				}
+				if observations[i].ReviewStatus == "" {
+					observations[i].ReviewStatus = "pending"
+				}
+			}
+			if err := tx.Create(&observations).Error; err != nil {
+				return err
+			}
 		}
-		for i := range observations {
-			observations[i].ID = uuid.Nil
-			observations[i].UserID = userID
-			observations[i].DocumentID = documentID
-			if observations[i].CodeSystem == "" {
-				observations[i].CodeSystem = "local"
-			}
-			if len(observations[i].SourceBBoxJSON) == 0 {
-				observations[i].SourceBBoxJSON = []byte("{}")
-			}
-			if observations[i].ReviewStatus == "" {
-				observations[i].ReviewStatus = "pending"
+		if err := tx.Where("user_id = ? AND document_id = ?", userID, documentID).Delete(&models.DocumentMedication{}).Error; err != nil {
+			return err
+		}
+		for i := range medications {
+			medications[i].ID = uuid.Nil
+			medications[i].UserID = userID
+			medications[i].DocumentID = documentID
+			if medications[i].ReviewStatus == "" {
+				medications[i].ReviewStatus = "pending"
 			}
 		}
-		return tx.Create(&observations).Error
+		if len(medications) > 0 {
+			return tx.Create(&medications).Error
+		}
+		return nil
 	})
 }
 

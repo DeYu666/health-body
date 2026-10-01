@@ -1,8 +1,12 @@
 package handlers
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"log"
 	"net/http"
+	"time"
 
 	"github.com/example/phr-backend/internal/repository"
 	"github.com/example/phr-backend/internal/service"
@@ -28,6 +32,26 @@ func (h *DocumentHandler) ImportDocument(c *gin.Context) {
 	var input service.ImportDocumentInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(input.Files) > 1 && input.FileMode == "separate" {
+		jobID := uuid.New()
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			defer cancel()
+			failed := 0
+			for index, file := range input.Files {
+				singleInput := input
+				singleInput.Files = []service.ImportDocumentFileInput{file}
+				singleInput.Title = fmt.Sprintf("待识别健康资料 · 图片%d", index+1)
+				if _, err := h.service.Import(ctx, userID, singleInput); err != nil {
+					failed++
+					log.Printf("[DocumentImport] background job %s file %d failed: %v", jobID, index+1, err)
+				}
+			}
+			log.Printf("[DocumentImport] background job %s completed: total=%d failed=%d", jobID, len(input.Files), failed)
+		}()
+		c.JSON(http.StatusAccepted, gin.H{"status": "processing", "jobId": jobID, "documents": len(input.Files)})
 		return
 	}
 
@@ -78,6 +102,14 @@ func (h *DocumentHandler) ListDocuments(c *gin.Context) {
 		Status:   c.Query("status"),
 		Limit:    parseIntOrDefault(c.Query("limit"), 20),
 		Offset:   parseIntOrDefault(c.Query("offset"), 0),
+	}
+	if memberID := c.Query("memberId"); memberID != "" {
+		parsed, err := uuid.Parse(memberID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的成员 ID"})
+			return
+		}
+		filter.MemberID = &parsed
 	}
 
 	result, err := h.service.List(c.Request.Context(), filter)
@@ -165,6 +197,35 @@ func (h *DocumentHandler) UpdateDocumentReview(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, document)
+}
+
+func (h *DocumentHandler) AnalyzeStructured(c *gin.Context) {
+	userID, ok := requireUser(c)
+	if !ok {
+		return
+	}
+	documentID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的资料 ID"})
+		return
+	}
+	var input struct {
+		Kind string `json:"kind" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	result, err := h.service.AnalyzeStructured(c.Request.Context(), userID, documentID, input.Kind)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "资料不存在"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
 }
 
 func (h *DocumentHandler) GetDocumentStatus(c *gin.Context) {

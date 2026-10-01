@@ -34,19 +34,19 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
   }
 
   return (
-    <aside className="hidden h-full rounded-2xl border border-slate-200 bg-white p-6 text-slate-900 md:flex md:flex-col md:shadow-card">
+    <aside className="hidden h-full rounded-lg border border-slate-200 bg-white p-6 text-slate-900 md:flex md:flex-col md:shadow-sm">
       <div className="mb-6 flex items-center gap-3">
-        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
+        <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
           <FaHeartbeat className="text-2xl text-primary" />
         </div>
         <div>
-          <p className="text-sm uppercase tracking-wide text-slate-400">PHR</p>
-          <h2 className="text-2xl font-semibold">健康档案</h2>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Family Health</p>
+          <h2 className="text-xl font-semibold">家庭医疗本</h2>
         </div>
       </div>
 
-      <div className="mb-8 space-y-3 rounded-xl bg-slate-50 p-4">
-        <p className="text-xs uppercase tracking-wide text-slate-400">今日提示</p>
+      <div className="mb-8 space-y-3 rounded-lg bg-slate-50 p-4">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">当前档案</p>
         <div>
           <p className="text-sm text-slate-500">已归档健康资料</p>
           <p className="text-2xl font-semibold">{stats.reportCount} 份</p>
@@ -55,7 +55,7 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
           <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm leading-relaxed text-slate-600">
             <p className="font-semibold text-slate-900">最近导入</p>
             <p className="truncate text-slate-600">{stats.latestUpload}</p>
-            <p className="text-xs text-emerald-600">可追溯来源并进入 AI 整理</p>
+            <p className="text-xs text-emerald-600">原始文件与解析结果均可查看</p>
           </div>
         ) : null}
       </div>
@@ -70,7 +70,7 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
                 <button
                   onClick={() => onNavigate(path)}
                   className={clsx(
-                    'flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left transition-all',
+                    'flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left transition-all',
                     isActive
                       ? 'bg-primary text-white shadow-md'
                       : 'bg-white text-slate-600 hover:bg-slate-50 hover:text-primary',
@@ -78,7 +78,7 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
                 >
                   <span
                     className={clsx(
-                      'flex h-10 w-10 items-center justify-center rounded-xl',
+                      'flex h-10 w-10 items-center justify-center rounded-lg',
                       isActive ? 'bg-white/15 text-white' : 'bg-slate-100 text-slate-500',
                     )}
                   >
@@ -112,14 +112,8 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
       </nav>
 
       <div className="mt-auto space-y-3">
-        <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">
-          <p className="font-semibold text-slate-900">隐私与安全提示</p>
-          <p className="mt-2 leading-relaxed">
-            原始资料与 AI 结果应保留来源引用。PIN 与生物识别会在本机解锁流程补全后开放。
-          </p>
-        </div>
         {user && (
-          <div className="rounded-xl bg-slate-50 p-4">
+          <div className="rounded-lg bg-slate-50 p-4">
             <p className="text-xs uppercase tracking-wide text-slate-400">当前用户</p>
             <p className="mt-1 text-sm font-semibold text-slate-900">{user.displayName || user.email}</p>
             <button

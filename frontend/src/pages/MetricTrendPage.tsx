@@ -10,7 +10,7 @@ import { baseLineOptions } from '../lib/chartConfig'
 import type { MetricSeries, MetricType } from '../types'
 import { getMetricLabel, metricLabels } from '../data/mockMetrics'
 
-type TimeRange = 'day' | 'week' | 'month' | 'year'
+type TimeRange = 'day' | 'week' | 'month' | 'year' | 'all'
 
 const defaultMetricTabs: { value: MetricType; label: string }[] = [
   { value: 'weight', label: '体重' },
@@ -21,6 +21,7 @@ const defaultMetricTabs: { value: MetricType; label: string }[] = [
 ]
 
 const rangeOptions: { value: TimeRange; label: string }[] = [
+  { value: 'all', label: '全部' },
   { value: 'day', label: '日' },
   { value: 'week', label: '周' },
   { value: 'month', label: '月' },
@@ -63,7 +64,7 @@ export const MetricTrendPage: React.FC = () => {
   const { setHeaderConfig } = useOutletContext<AppShellContextValue>()
   const navigate = useNavigate()
   const [activeMetric, setActiveMetric] = useState<MetricType>('weight')
-  const [range, setRange] = useState<TimeRange>('week')
+  const [range, setRange] = useState<TimeRange>('all')
 
   useEffect(() => {
     setHeaderConfig({
@@ -72,10 +73,15 @@ export const MetricTrendPage: React.FC = () => {
   }, [setHeaderConfig])
 
   const seriesMap = useMemo(() => {
+    const amount = range === 'day' ? 1 : range === 'week' ? 7 : range === 'month' ? 30 : 365
+    const start = dayjs().subtract(amount, 'day')
     const map = new Map<MetricType, MetricSeries>()
-    metricSeries.forEach((series) => map.set(series.metricType, series))
+    metricSeries.forEach((series) => map.set(series.metricType, {
+      ...series,
+      data: range === 'all' ? series.data : series.data.filter((point) => dayjs(point.recordedAt).isAfter(start)),
+    }))
     return map
-  }, [metricSeries])
+  }, [metricSeries, range])
 
   const metricTabs = useMemo(() => {
     const defaultTypes = new Set(defaultMetricTabs.map((tab) => tab.value))
@@ -85,7 +91,7 @@ export const MetricTrendPage: React.FC = () => {
         value: series.metricType,
         label: getMetricLabel(series.metricType),
       }))
-    return [...defaultMetricTabs, ...dynamicTabs]
+    return [...defaultMetricTabs.filter((tab) => metricSeries.some((series) => series.metricType === tab.value && series.data.length > 0)), ...dynamicTabs]
   }, [metricSeries])
 
   useEffect(() => {
@@ -98,7 +104,7 @@ export const MetricTrendPage: React.FC = () => {
   const summary = getSummary(activeSeries)
 
   const lineData = useMemo(() => {
-    if (!activeSeries) return undefined
+    if (!activeSeries?.data.length) return undefined
     return {
       labels: activeSeries.data.map((point) => dayjs(point.recordedAt).format('MM-DD')),
       datasets: [
@@ -120,7 +126,7 @@ export const MetricTrendPage: React.FC = () => {
   const bloodSugarSeries = seriesMap.get('blood-sugar')
 
   const bloodPressureChart = useMemo(() => {
-    if (!bloodPressureSeries) return undefined
+    if (!bloodPressureSeries?.data.length) return undefined
     return {
       labels: bloodPressureSeries.data.map((point) => dayjs(point.recordedAt).format('MM-DD')),
       datasets: [
@@ -135,7 +141,7 @@ export const MetricTrendPage: React.FC = () => {
         },
         {
           label: '舒张压',
-          data: bloodPressureSeries.data.map((point) => point.secondaryValue ?? point.value - 40),
+          data: bloodPressureSeries.data.map((point) => point.secondaryValue ?? null),
           borderColor: '#3b82f6',
           backgroundColor: 'rgba(59, 130, 246, 0.1)',
           fill: true,
@@ -152,7 +158,7 @@ export const MetricTrendPage: React.FC = () => {
   )
 
   const bloodSugarChart = useMemo(() => {
-    if (!bloodSugarSeries) return undefined
+    if (!bloodSugarSeries?.data.length) return undefined
     return {
       labels: bloodSugarSeries.data.map((point) => dayjs(point.recordedAt).format('MM-DD')),
       datasets: [
@@ -171,22 +177,22 @@ export const MetricTrendPage: React.FC = () => {
   }, [bloodSugarSeries])
 
   return (
-    <div className="space-y-6 bg-white px-4 pb-14 pt-6 md:px-8">
+    <div className="mx-auto max-w-7xl space-y-6 bg-slate-50 px-4 pb-14 pt-5 md:px-6 lg:px-8">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-slate-900">我的指标</h1>
         <button
           onClick={() => navigate('/metrics/new')}
-          className="flex items-center gap-2 rounded-xl bg-secondary px-4 py-2 text-sm font-semibold text-white shadow-card transition hover:bg-emerald-600"
+          className="flex items-center gap-2 rounded-lg bg-secondary px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-600"
         >
           <FaPlus />
-          AI 记录
+          记录指标
         </button>
       </div>
 
-      <div className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
+      <div className="flex items-center gap-3 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-600">
         <FaInfoCircle className="text-primary" />
         <span>
-          指标会逐步合并报告抽取、拍照识别、设备同步和一句话记录。
+          当前展示 OCR 报告抽取与手动记录的数据，并按所选时间范围过滤。
         </span>
       </div>
 
@@ -198,7 +204,7 @@ export const MetricTrendPage: React.FC = () => {
             className={clsx(
               'whitespace-nowrap rounded-full px-4 py-2 text-sm font-semibold transition',
               activeMetric === tab.value
-                ? 'bg-primary text-white shadow-card'
+                ? 'bg-primary text-white shadow-sm'
                 : 'bg-slate-100 text-slate-500 hover:bg-primary/10 hover:text-primary',
             )}
           >
@@ -213,7 +219,7 @@ export const MetricTrendPage: React.FC = () => {
             key={option.value}
             onClick={() => setRange(option.value)}
             className={clsx(
-              'flex-1 rounded-xl border px-3 py-2 text-sm font-semibold transition',
+              'flex-1 rounded-lg border px-3 py-2 text-sm font-semibold transition',
               range === option.value
                 ? 'border-primary bg-primary text-white'
                 : 'border-slate-200 bg-slate-50 text-slate-500 hover:border-primary hover:text-primary',
@@ -224,7 +230,7 @@ export const MetricTrendPage: React.FC = () => {
         ))}
       </div>
 
-      <section className="space-y-4 rounded-2xl bg-slate-50 p-4">
+      <section className="space-y-4 rounded-lg bg-slate-50 p-4">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs uppercase tracking-wide text-slate-400">
@@ -238,7 +244,7 @@ export const MetricTrendPage: React.FC = () => {
               {metricLabels[activeMetric]?.description ?? '来自报告抽取、设备同步或手动补录的趋势数据。'}
             </p>
           </div>
-          <div className="rounded-xl bg-white px-4 py-3 text-xs text-slate-500 shadow-inner">
+          <div className="rounded-lg bg-white px-4 py-3 text-xs text-slate-500 shadow-inner">
             <p>
               最低值 <span className="ml-2 text-sm font-semibold text-slate-900">{summary.min}</span>
             </p>
@@ -251,14 +257,22 @@ export const MetricTrendPage: React.FC = () => {
             </p>
           </div>
         </div>
-        <div className="h-64 overflow-hidden rounded-2xl bg-white p-2 shadow-card">
-          {lineData ? <Line data={lineData} options={baseLineOptions} /> : null}
+        <div className="h-64 overflow-hidden rounded-lg bg-white p-2 shadow-sm">
+          {lineData ? <Line data={lineData} options={baseLineOptions} /> : (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-slate-500">
+              <p>{metricSeries.length ? '这个时间范围内没有记录' : '还没有身体指标记录'}</p>
+              <button type="button" onClick={() => range !== 'all' ? setRange('all') : navigate('/import')} className="font-semibold text-primary">
+                {range !== 'all' ? '查看全部时间' : '导入报告或健康数据'}
+              </button>
+            </div>
+          )}
         </div>
       </section>
 
-      <section className="space-y-4 rounded-2xl bg-slate-50 p-4">
+      {bloodPressureChart ? <section className="space-y-4 rounded-lg bg-slate-50 p-4">
         <h2 className="text-sm font-semibold text-slate-600">血压趋势</h2>
-        <div className="h-60 overflow-hidden rounded-2xl bg-white p-4 shadow-card">
+        <p className="text-xs text-slate-500">未记录的舒张压留空，不推算缺失值。</p>
+        <div className="h-60 overflow-hidden rounded-lg bg-white p-4 shadow-sm">
           {bloodPressureChart ? (
             <Line
               data={bloodPressureChart}
@@ -273,11 +287,11 @@ export const MetricTrendPage: React.FC = () => {
             </div>
           )}
         </div>
-      </section>
+      </section> : null}
 
-      <section className="space-y-4 rounded-2xl bg-slate-50 p-4">
+      {bloodSugarChart ? <section className="space-y-4 rounded-lg bg-slate-50 p-4">
         <h2 className="text-sm font-semibold text-slate-600">血糖趋势</h2>
-        <div className="h-60 overflow-hidden rounded-2xl bg-white p-4 shadow-card">
+        <div className="h-60 overflow-hidden rounded-lg bg-white p-4 shadow-sm">
           {bloodSugarChart ? (
             <Line data={bloodSugarChart} options={baseLineOptions} />
           ) : (
@@ -287,7 +301,7 @@ export const MetricTrendPage: React.FC = () => {
           )}
         </div>
         {hasHighBloodSugar ? (
-          <div className="flex items-start gap-3 rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          <div className="flex items-start gap-3 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700">
             <FaExclamationTriangle className="mt-1" />
             <div>
               <p className="font-semibold">检测到高于 7.0 mmol/L 的血糖记录</p>
@@ -297,7 +311,7 @@ export const MetricTrendPage: React.FC = () => {
             </div>
           </div>
         ) : null}
-      </section>
+      </section> : null}
     </div>
   )
 }

@@ -32,11 +32,23 @@ type User struct {
 	LastLoginAt   *time.Time
 	Reports       []Report
 	MetricEntries []MetricEntry
+	FamilyMembers []FamilyMember
+}
+
+type FamilyMember struct {
+	BaseModel
+	UserID       uuid.UUID  `json:"userId" gorm:"type:uuid;index;not null"`
+	Name         string     `json:"name" gorm:"size:80;not null"`
+	Relationship string     `json:"relationship" gorm:"size:40;not null"`
+	Gender       string     `json:"gender" gorm:"size:24"`
+	BirthDate    *time.Time `json:"birthDate"`
+	IsSelf       bool       `json:"isSelf" gorm:"default:false"`
 }
 
 type Report struct {
 	BaseModel
 	UserID       uuid.UUID      `json:"userId" gorm:"type:uuid;index"`
+	MemberID     *uuid.UUID     `json:"memberId,omitempty" gorm:"type:uuid;index"`
 	Title        string         `json:"title" gorm:"size:200;not null"`
 	Hospital     string         `json:"hospital" gorm:"size:160;not null"`
 	ReportDate   time.Time      `json:"reportDate" gorm:"index"`
@@ -59,6 +71,7 @@ type ReportFile struct {
 	FileURL      string    `json:"fileUrl" gorm:"size:512;not null"`
 	PreviewURL   string    `json:"previewUrl" gorm:"size:512"`
 	DisplayOrder int       `json:"displayOrder" gorm:"default:0"`
+	Rotation     int       `json:"rotation" gorm:"default:0"`
 }
 
 type ReportShare struct {
@@ -72,25 +85,30 @@ type ReportShare struct {
 
 type MetricEntry struct {
 	BaseModel
-	UserID         uuid.UUID `json:"userId" gorm:"type:uuid;index"`
-	MetricType     string    `json:"metricType" gorm:"size:64;index"`
-	PrimaryValue   float64   `json:"primaryValue"`
-	SecondaryValue *float64  `json:"secondaryValue,omitempty"`
-	Unit           string    `json:"unit" gorm:"size:32"`
-	RecordedAt     time.Time `json:"recordedAt" gorm:"index"`
-	Notes          string    `json:"notes" gorm:"type:text"`
+	UserID         uuid.UUID  `json:"userId" gorm:"type:uuid;index"`
+	MemberID       *uuid.UUID `json:"memberId,omitempty" gorm:"type:uuid;index"`
+	MetricType     string     `json:"metricType" gorm:"size:64;index"`
+	PrimaryValue   float64    `json:"primaryValue"`
+	SecondaryValue *float64   `json:"secondaryValue,omitempty"`
+	Unit           string     `json:"unit" gorm:"size:32"`
+	RecordedAt     time.Time  `json:"recordedAt" gorm:"index"`
+	Notes          string     `json:"notes" gorm:"type:text"`
 }
 
 type HealthDocument struct {
 	BaseModel
 	UserID       uuid.UUID              `json:"userId" gorm:"type:uuid;index"`
+	MemberID     *uuid.UUID             `json:"memberId,omitempty" gorm:"type:uuid;index"`
 	Title        string                 `json:"title" gorm:"size:200;not null"`
 	Category     string                 `json:"category" gorm:"size:64;index"`
+	Categories   datatypes.JSON         `json:"categories" gorm:"type:jsonb;default:'[]'"`
 	Subcategory  string                 `json:"subcategory" gorm:"size:64;index"`
 	SourceType   string                 `json:"sourceType" gorm:"size:32;index"`
 	Status       string                 `json:"status" gorm:"size:32;index;default:'uploaded'"`
 	Organization string                 `json:"organization" gorm:"size:160"`
 	Department   string                 `json:"department" gorm:"size:120"`
+	SubjectName  string                 `json:"subjectName" gorm:"size:80"`
+	ReportType   string                 `json:"reportType" gorm:"size:80;index"`
 	DocumentDate *time.Time             `json:"documentDate" gorm:"index"`
 	Summary      string                 `json:"summary" gorm:"type:text"`
 	AIConclusion string                 `json:"aiConclusion" gorm:"type:text"`
@@ -99,7 +117,25 @@ type HealthDocument struct {
 	Files        []DocumentFile         `json:"files" gorm:"foreignKey:DocumentID"`
 	OCRResults   []OCRResult            `json:"ocrResults" gorm:"foreignKey:DocumentID"`
 	Observations []ExtractedObservation `json:"observations" gorm:"foreignKey:DocumentID"`
+	Medications  []DocumentMedication   `json:"medications" gorm:"foreignKey:DocumentID"`
 	Analyses     []AIAnalysis           `json:"analyses" gorm:"foreignKey:DocumentID"`
+}
+
+type DocumentMedication struct {
+	BaseModel
+	UserID        uuid.UUID `json:"userId" gorm:"type:uuid;index;not null"`
+	DocumentID    uuid.UUID `json:"documentId" gorm:"type:uuid;index;not null"`
+	Name          string    `json:"name" gorm:"size:160;not null"`
+	GenericName   string    `json:"genericName" gorm:"size:160;index"`
+	Specification string    `json:"specification" gorm:"size:120"`
+	Dose          string    `json:"dose" gorm:"size:80"`
+	Frequency     string    `json:"frequency" gorm:"size:80"`
+	Route         string    `json:"route" gorm:"size:80"`
+	Duration      string    `json:"duration" gorm:"size:80"`
+	Quantity      string    `json:"quantity" gorm:"size:80"`
+	Instructions  string    `json:"instructions" gorm:"size:300"`
+	Confidence    *float64  `json:"confidence"`
+	ReviewStatus  string    `json:"reviewStatus" gorm:"size:32;index;default:'pending'"`
 }
 
 type DocumentFile struct {

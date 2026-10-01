@@ -29,7 +29,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ items, className }) => {
             to={path}
             className={({ isActive }) =>
               clsx(
-                'flex flex-col items-center gap-1 rounded-xl py-2 text-center text-xs font-medium transition-all',
+                'flex flex-col items-center gap-1 rounded-lg py-2 text-center text-xs font-medium transition-all',
                 isActive
                   ? 'text-primary bg-primary/10 shadow-inner'
                   : 'text-slate-400 hover:text-primary',

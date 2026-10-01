@@ -28,9 +28,9 @@ export const LoginPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-hero px-4 py-8">
-      <div className="mx-auto flex w-full max-w-md flex-col items-center justify-center gap-8 rounded-2xl border border-slate-200 bg-white p-6 text-slate-900 shadow-card">
+      <div className="mx-auto flex w-full max-w-md flex-col items-center justify-center gap-8 rounded-lg border border-slate-200 bg-white p-6 text-slate-900 shadow-sm">
         <div className="text-center">
-          <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-2xl bg-primary/10 shadow-inner">
+          <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-lg bg-primary/10 shadow-inner">
             <FaHeartbeat className="text-4xl text-primary" />
           </div>
           <h1 className="text-3xl font-semibold">健康档案</h1>
@@ -39,7 +39,7 @@ export const LoginPage: React.FC = () => {
 
         <form
           onSubmit={handleSubmit}
-          className="w-full space-y-4 rounded-2xl bg-slate-50 p-6 text-slate-900"
+          className="w-full space-y-4 rounded-lg bg-slate-50 p-6 text-slate-900"
         >
           <div>
             <label className="text-sm font-semibold text-slate-700">邮箱地址</label>
@@ -48,7 +48,7 @@ export const LoginPage: React.FC = () => {
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               placeholder="your@email.com"
-              className="mt-2 w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+              className="mt-2 w-full rounded-lg border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
             />
           </div>
 
@@ -59,7 +59,7 @@ export const LoginPage: React.FC = () => {
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               placeholder="请输入密码"
-              className="mt-2 w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+              className="mt-2 w-full rounded-lg border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
             />
             <p className="mt-2 text-xs text-slate-400">
               账号用于同步云端数据。默认体验账号：demo@example.com / demo1234
@@ -67,7 +67,7 @@ export const LoginPage: React.FC = () => {
           </div>
 
           {error ? (
-            <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+            <div className="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
               {error}
             </div>
           ) : null}
@@ -75,14 +75,14 @@ export const LoginPage: React.FC = () => {
           <button
             type="submit"
             disabled={isLoading}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 font-semibold text-white shadow-lg shadow-primary/25 transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:bg-primary/60"
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 font-semibold text-white shadow-lg shadow-primary/25 transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:bg-primary/60"
           >
             <FaSignInAlt />
             {isLoading ? '正在登录...' : '登录'}
           </button>
         </form>
 
-        <div className="w-full rounded-2xl bg-slate-50 p-6 text-slate-900">
+        <div className="w-full rounded-lg bg-slate-50 p-6 text-slate-900">
           <div className="flex items-center justify-center gap-2 rounded-full bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-700">
             <FaShieldAlt />
             数据采用 AES-256 加密存储

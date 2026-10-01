@@ -14,6 +14,7 @@ import (
 
 type ReportFilter struct {
 	UserID    uuid.UUID
+	MemberID  *uuid.UUID
 	Search    string
 	Tag       string
 	Hospital  string
@@ -30,6 +31,20 @@ type ReportRepository interface {
 	List(ctx context.Context, filter ReportFilter) ([]models.Report, int64, error)
 	Update(ctx context.Context, report *models.Report) error
 	Delete(ctx context.Context, id uuid.UUID, userID uuid.UUID) error
+	UpdateFileRotation(ctx context.Context, userID, reportID, fileID uuid.UUID, rotation int) error
+}
+
+func (r *reportRepository) UpdateFileRotation(ctx context.Context, userID, reportID, fileID uuid.UUID, rotation int) error {
+	result := r.db.WithContext(ctx).Model(&models.ReportFile{}).
+		Where("id = ? AND report_id = ? AND report_id IN (SELECT id FROM reports WHERE user_id = ? AND deleted_at IS NULL)", fileID, reportID, userID).
+		Update("rotation", rotation)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 type reportRepository struct {
@@ -90,6 +105,9 @@ func (r *reportRepository) FindByID(ctx context.Context, id uuid.UUID, userID uu
 
 func (r *reportRepository) List(ctx context.Context, filter ReportFilter) ([]models.Report, int64, error) {
 	query := r.db.WithContext(ctx).Model(&models.Report{}).Where("user_id = ?", filter.UserID)
+	if filter.MemberID != nil {
+		query = query.Where("member_id = ?", *filter.MemberID)
+	}
 
 	if filter.Search != "" {
 		search := "%" + strings.ToLower(filter.Search) + "%"

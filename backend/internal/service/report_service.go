@@ -20,6 +20,7 @@ type ReportService interface {
 	Update(ctx context.Context, userID, reportID uuid.UUID, input UpdateReportInput) (*ReportDTO, error)
 	Delete(ctx context.Context, userID, reportID uuid.UUID) error
 	ListHospitals(ctx context.Context, userID uuid.UUID) ([]string, error)
+	UpdateFileRotation(ctx context.Context, userID, reportID, fileID uuid.UUID, rotation int) error
 }
 
 type reportService struct {
@@ -39,6 +40,7 @@ type CreateReportFileInput struct {
 }
 
 type CreateReportInput struct {
+	MemberID    *uuid.UUID              `json:"memberId"`
 	Title       string                  `json:"title" binding:"required"`
 	Hospital    string                  `json:"hospital" binding:"required"`
 	ReportDate  time.Time               `json:"reportDate" binding:"required"`
@@ -53,6 +55,7 @@ type CreateReportInput struct {
 }
 
 type UpdateReportInput struct {
+	MemberID   *uuid.UUID `json:"memberId"`
 	Title      *string    `json:"title"`
 	Hospital   *string    `json:"hospital"`
 	ReportDate *time.Time `json:"reportDate"`
@@ -67,10 +70,20 @@ type ReportFileDTO struct {
 	FileURL      string    `json:"fileUrl"`
 	PreviewURL   string    `json:"previewUrl,omitempty"`
 	DisplayOrder int       `json:"displayOrder"`
+	Rotation     int       `json:"rotation"`
+}
+
+func (s *reportService) UpdateFileRotation(ctx context.Context, userID, reportID, fileID uuid.UUID, rotation int) error {
+	normalized := ((rotation % 360) + 360) % 360
+	if normalized%90 != 0 {
+		return errors.New("rotation must be a multiple of 90")
+	}
+	return s.repo.UpdateFileRotation(ctx, userID, reportID, fileID, normalized)
 }
 
 type ReportDTO struct {
 	ID          uuid.UUID       `json:"id"`
+	MemberID    *uuid.UUID      `json:"memberId,omitempty"`
 	Title       string          `json:"title"`
 	Hospital    string          `json:"hospital"`
 	ReportDate  time.Time       `json:"reportDate"`
@@ -116,6 +129,7 @@ func (s *reportService) Create(ctx context.Context, userID uuid.UUID, input Crea
 
 	report := &models.Report{
 		UserID:      userID,
+		MemberID:    input.MemberID,
 		Title:       input.Title,
 		Hospital:    input.Hospital,
 		ReportDate:  input.ReportDate,
@@ -219,6 +233,9 @@ func (s *reportService) Update(ctx context.Context, userID, reportID uuid.UUID, 
 	if input.Title != nil {
 		report.Title = *input.Title
 	}
+	if input.MemberID != nil {
+		report.MemberID = input.MemberID
+	}
 	if input.Hospital != nil {
 		report.Hospital = *input.Hospital
 	}
@@ -295,11 +312,13 @@ func mapReportToDTO(report *models.Report) (*ReportDTO, error) {
 			FileURL:      file.FileURL,
 			PreviewURL:   file.PreviewURL,
 			DisplayOrder: file.DisplayOrder,
+			Rotation:     file.Rotation,
 		})
 	}
 
 	return &ReportDTO{
 		ID:          report.ID,
+		MemberID:    report.MemberID,
 		Title:       report.Title,
 		Hospital:    report.Hospital,
 		ReportDate:  report.ReportDate,

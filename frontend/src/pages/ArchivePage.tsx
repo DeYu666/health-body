@@ -29,8 +29,9 @@ const categoryKeywords: Record<Exclude<CategoryTab, '全部' | '待处理' | '�
 const inferCategory = (report: Report): CategoryTab => {
   if (
     report.tags.includes('AI待处理') ||
-    report.hospital === 'AI 待识别' ||
-    report.title.startsWith('待识别健康资料')
+    report.tags.includes('AI待复核') ||
+    report.tags.includes('AI解析失败') ||
+    report.hospital === 'AI 待识别'
   ) {
     return '待处理'
   }
@@ -79,6 +80,22 @@ export const ArchivePage: React.FC = () => {
       setActiveCategory(state.category)
     }
   }, [location.state])
+
+  useEffect(() => {
+    const state = location.state as { processing?: boolean } | null
+    if (!state?.processing) return
+    setBackfillMessage('批量照片正在分别进行 OCR/AI 整理，每张照片完成后会作为独立档案出现。')
+    let attempts = 0
+    const interval = window.setInterval(async () => {
+      attempts += 1
+      await Promise.all([refreshReports(), refreshMetrics()])
+      if (attempts >= 36) {
+        window.clearInterval(interval)
+        setBackfillMessage('后台整理仍在继续，可稍后返回档案页查看。')
+      }
+    }, 5_000)
+    return () => window.clearInterval(interval)
+  }, [location.state, refreshMetrics, refreshReports])
 
   const reportsWithCategory = useMemo(
     () =>
@@ -134,7 +151,7 @@ export const ArchivePage: React.FC = () => {
   }
 
   return (
-    <div className="space-y-5 bg-slate-50 px-4 pb-12 pt-5 md:px-8">
+    <div className="mx-auto max-w-7xl space-y-5 bg-slate-50 px-4 pb-12 pt-5 md:px-6 lg:px-8">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">健康资料库</h1>
@@ -177,7 +194,7 @@ export const ArchivePage: React.FC = () => {
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-3">
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-4 gap-2 lg:grid-cols-8">
           {categoryTabs.map((category) => (
             <button
               key={category}
@@ -225,7 +242,7 @@ export const ArchivePage: React.FC = () => {
       </div>
 
       {view === 'library' ? (
-        <div className="space-y-3">
+        <div className="grid gap-3 lg:grid-cols-2">
           {filteredReports.length > 0 ? (
             filteredReports.map((report) => {
               const category = inferCategory(report)

@@ -7,6 +7,7 @@ import (
 	"github.com/example/phr-backend/internal/repository"
 	"github.com/example/phr-backend/internal/service"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type MetricHandler struct {
@@ -48,6 +49,14 @@ func (h *MetricHandler) ListMetrics(c *gin.Context) {
 		UserID:     userID,
 		MetricType: c.Query("metricType"),
 		Order:      "recorded_at DESC",
+	}
+	if memberID := c.Query("memberId"); memberID != "" {
+		parsed, err := uuid.Parse(memberID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "无效的成员 ID"})
+			return
+		}
+		filter.MemberID = &parsed
 	}
 	if limit := c.Query("limit"); limit != "" {
 		filter.Limit = parseIntOrDefault(limit, 100)

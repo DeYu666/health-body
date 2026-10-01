@@ -45,17 +45,29 @@ func NewPostgres(cfg *config.Config) (*gorm.DB, error) {
 }
 
 func AutoMigrate(db *gorm.DB) error {
-	return db.AutoMigrate(
+	if err := db.AutoMigrate(
 		&models.User{},
+		&models.FamilyMember{},
 		&models.Report{},
 		&models.ReportFile{},
 		&models.ReportShare{},
 		&models.MetricEntry{},
+		&models.WearableSample{},
 		&models.HealthDocument{},
 		&models.DocumentFile{},
 		&models.OCRResult{},
 		&models.ExtractedObservation{},
+		&models.DocumentMedication{},
 		&models.AIAnalysis{},
 		&models.ReviewTask{},
-	)
+	); err != nil {
+		return err
+	}
+	return db.Exec(`
+		UPDATE health_documents
+		SET categories = jsonb_build_array(category)
+		WHERE jsonb_array_length(categories) = 0
+		  AND category IS NOT NULL
+		  AND category <> ''
+	`).Error
 }

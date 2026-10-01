@@ -11,6 +11,7 @@ import (
 
 type MetricFilter struct {
 	UserID     uuid.UUID
+	MemberID   *uuid.UUID
 	MetricType string
 	StartDate  *time.Time
 	EndDate    *time.Time
@@ -46,6 +47,9 @@ func (m *metricRepository) DeleteBySourceDocument(ctx context.Context, userID uu
 
 func (m *metricRepository) List(ctx context.Context, filter MetricFilter) ([]models.MetricEntry, error) {
 	query := m.db.WithContext(ctx).Where("user_id = ?", filter.UserID)
+	if filter.MemberID != nil {
+		query = query.Where("member_id = ?", *filter.MemberID)
+	}
 	if filter.MetricType != "" {
 		query = query.Where("metric_type = ?", filter.MetricType)
 	}

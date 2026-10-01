@@ -57,7 +57,20 @@ func JWTAuth(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
-// RequireAuth 要求请求必须包含有效的认证信息
+// RequireJWT accepts only the identity established by JWTAuth.
+func RequireJWT() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if id, ok := c.Get("userID"); ok {
+			if parsed, valid := id.(uuid.UUID); valid && parsed != uuid.Nil {
+				c.Next()
+				return
+			}
+		}
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "登录已过期，请重新登录"})
+	}
+}
+
+// RequireAuth retains the legacy header authentication for existing routes.
 func RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 检查是否有 userID（可能来自 JWT 或 X-User-ID header）

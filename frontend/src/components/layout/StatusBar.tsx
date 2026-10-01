@@ -1,7 +1,4 @@
 import clsx from 'classnames'
-import dayjs from 'dayjs'
-import { useEffect, useState } from 'react'
-import { FaBatteryThreeQuarters, FaSignal, FaWifi } from 'react-icons/fa'
 import { HiMiniArrowLeft } from 'react-icons/hi2'
 import type { ReactNode } from 'react'
 
@@ -20,19 +17,10 @@ export const StatusBar: React.FC<StatusBarConfig> = ({
   rightContent,
   accent = 'light',
 }) => {
-  const [time, setTime] = useState(() => dayjs().format('HH:mm'))
-
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      setTime(dayjs().format('HH:mm'))
-    }, 60_000)
-    return () => window.clearInterval(interval)
-  }, [])
-
   return (
     <header
       className={clsx(
-        'flex h-14 items-center justify-between px-5',
+        'flex min-h-16 items-center justify-between gap-4 px-4 md:px-6',
         accent === 'brand' ? 'border-b border-white/20 bg-white/10 text-white' : 'border-b border-slate-200 bg-white text-slate-900',
       )}
     >
@@ -50,40 +38,20 @@ export const StatusBar: React.FC<StatusBarConfig> = ({
           >
             <HiMiniArrowLeft className="text-lg" />
           </button>
-        ) : (
-          <span
-            className={clsx(
-              'text-base font-semibold tracking-wide',
-              accent === 'brand' ? 'text-white' : 'text-slate-900',
-            )}
-          >
-            {time}
-          </span>
-        )}
-        {title ? (
+        ) : null}
+        {title || !showBackButton ? (
           <span
             className={clsx(
               'text-sm font-semibold',
               accent === 'brand' ? 'text-white/90' : 'text-slate-800',
             )}
           >
-            {title}
+            {title || '家庭医疗本'}
           </span>
         ) : null}
       </div>
 
-      <div className="flex items-center gap-3 text-sm font-semibold">
-        {rightContent ?? (
-          <>
-            <FaSignal className={accent === 'brand' ? 'text-white' : 'text-slate-700'} />
-            <FaWifi className={accent === 'brand' ? 'text-white' : 'text-slate-700'} />
-            <FaBatteryThreeQuarters
-              className={accent === 'brand' ? 'text-white' : 'text-slate-700'}
-            />
-          </>
-        )}
-      </div>
+      <div className="flex items-center gap-3 text-sm font-semibold">{rightContent}</div>
     </header>
   )
 }
-

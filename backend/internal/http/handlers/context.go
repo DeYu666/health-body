@@ -10,11 +10,6 @@ import (
 const DemoUserID = "11111111-1111-1111-1111-111111111111"
 
 func userIDFromRequest(c *gin.Context) (uuid.UUID, bool) {
-	if header := c.GetHeader("X-User-ID"); header != "" {
-		if id, err := uuid.Parse(header); err == nil {
-			return id, true
-		}
-	}
 	if claim, exists := c.Get("userID"); exists {
 		if id, ok := claim.(uuid.UUID); ok {
 			return id, true
@@ -23,6 +18,11 @@ func userIDFromRequest(c *gin.Context) (uuid.UUID, bool) {
 			if parsed, err := uuid.Parse(str); err == nil {
 				return parsed, true
 			}
+		}
+	}
+	if header := c.GetHeader("X-User-ID"); header != "" {
+		if id, err := uuid.Parse(header); err == nil {
+			return id, true
 		}
 	}
 	id, err := uuid.Parse(DemoUserID)

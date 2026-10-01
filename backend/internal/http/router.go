@@ -20,6 +20,8 @@ type HandlerRegistry struct {
 	Documents *handlers.DocumentHandler
 	Health    *handlers.HealthHandler
 	Upload    *handlers.UploadHandler
+	Members   *handlers.FamilyMemberHandler
+	Wearables *handlers.WearableHandler
 }
 
 func NewRouter(cfg *config.Config, registry HandlerRegistry) *Router {
@@ -46,7 +48,25 @@ func NewRouter(cfg *config.Config, registry HandlerRegistry) *Router {
 		auth.POST("/pin", registry.Auth.PinLogin)
 	}
 
+	if registry.Members != nil {
+		members := api.Group("/members")
+		members.Use(middleware.RequireAuth())
+		{
+			members.GET("", registry.Members.List)
+			members.POST("", registry.Members.Create)
+			members.PUT("/:id", registry.Members.Update)
+			members.DELETE("/:id", registry.Members.Delete)
+		}
+	}
+
 	// 需要认证的路由组
+	if registry.Wearables != nil {
+		wearables := api.Group("/wearables")
+		wearables.Use(middleware.RequireJWT())
+		wearables.POST("/apple-health/import", registry.Wearables.Import)
+		wearables.GET("/days", registry.Wearables.Days)
+	}
+
 	reports := api.Group("/reports")
 	reports.Use(middleware.RequireAuth())
 	{
@@ -54,6 +74,8 @@ func NewRouter(cfg *config.Config, registry HandlerRegistry) *Router {
 		reports.GET("/hospitals", registry.Reports.ListHospitals)
 		reports.POST("", registry.Reports.CreateReport)
 		reports.GET("/:id", registry.Reports.GetReport)
+		reports.GET("/:id/files/:fileId/content", registry.Reports.GetFileContent)
+		reports.PATCH("/:id/files/:fileId/rotation", registry.Reports.UpdateFileRotation)
 		reports.PUT("/:id", registry.Reports.UpdateReport)
 		reports.DELETE("/:id", registry.Reports.DeleteReport)
 	}
@@ -76,6 +98,7 @@ func NewRouter(cfg *config.Config, registry HandlerRegistry) *Router {
 			documents.GET("/by-legacy-report/:reportId", registry.Documents.GetDocumentByLegacyReport)
 			documents.GET("/:id/status", registry.Documents.GetDocumentStatus)
 			documents.PATCH("/:id/review", registry.Documents.UpdateDocumentReview)
+			documents.POST("/:id/analyze-structured", registry.Documents.AnalyzeStructured)
 			documents.GET("/:id", registry.Documents.GetDocument)
 		}
 	}

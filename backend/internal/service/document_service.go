@@ -26,17 +26,24 @@ type DocumentService interface {
 	Get(ctx context.Context, userID uuid.UUID, documentID uuid.UUID) (*DocumentDTO, error)
 	GetByLegacyReport(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) (*DocumentDTO, error)
 	UpdateReview(ctx context.Context, userID uuid.UUID, documentID uuid.UUID, input UpdateDocumentReviewInput) (*DocumentDTO, error)
+	AnalyzeStructured(ctx context.Context, userID uuid.UUID, documentID uuid.UUID, kind string) (*StructuredAnalysisDTO, error)
+}
+
+type StructuredAnalysisDTO struct {
+	Medications  []DocumentMedicationDTO  `json:"medications"`
+	Observations []DocumentObservationDTO `json:"observations"`
 }
 
 type documentService struct {
 	repo          repository.DocumentRepository
 	reportService ReportService
 	metricService MetricService
+	memberService FamilyMemberService
 	aiAnalyzer    AIAnalyzer
 	ocrProcessor  OCRProcessor
 }
 
-func NewDocumentService(repo repository.DocumentRepository, reportService ReportService, metricService MetricService, aiAnalyzer AIAnalyzer, ocrProcessor OCRProcessor) DocumentService {
+func NewDocumentService(repo repository.DocumentRepository, reportService ReportService, metricService MetricService, memberService FamilyMemberService, aiAnalyzer AIAnalyzer, ocrProcessor OCRProcessor) DocumentService {
 	if ocrProcessor == nil {
 		ocrProcessor = &noopOCRProcessor{provider: "none"}
 	}
@@ -44,6 +51,7 @@ func NewDocumentService(repo repository.DocumentRepository, reportService Report
 		repo:          repo,
 		reportService: reportService,
 		metricService: metricService,
+		memberService: memberService,
 		aiAnalyzer:    aiAnalyzer,
 		ocrProcessor:  ocrProcessor,
 	}
@@ -60,6 +68,8 @@ type ImportDocumentFileInput struct {
 }
 
 type ImportDocumentInput struct {
+	FileMode     string                    `json:"fileMode" binding:"omitempty,oneof=report separate"`
+	MemberID     *uuid.UUID                `json:"memberId"`
 	Title        string                    `json:"title"`
 	Category     string                    `json:"category"`
 	Subcategory  string                    `json:"subcategory"`
@@ -114,15 +124,34 @@ type DocumentObservationDTO struct {
 	ReviewStatus   string     `json:"reviewStatus"`
 }
 
+type DocumentMedicationDTO struct {
+	ID            uuid.UUID `json:"id"`
+	Name          string    `json:"name"`
+	GenericName   string    `json:"genericName"`
+	Specification string    `json:"specification"`
+	Dose          string    `json:"dose"`
+	Frequency     string    `json:"frequency"`
+	Route         string    `json:"route"`
+	Duration      string    `json:"duration"`
+	Quantity      string    `json:"quantity"`
+	Instructions  string    `json:"instructions"`
+	Confidence    *float64  `json:"confidence,omitempty"`
+	ReviewStatus  string    `json:"reviewStatus"`
+}
+
 type DocumentDTO struct {
 	ID              uuid.UUID                `json:"id"`
+	MemberID        *uuid.UUID               `json:"memberId,omitempty"`
 	Title           string                   `json:"title"`
 	Category        string                   `json:"category"`
+	Categories      []string                 `json:"categories"`
 	Subcategory     string                   `json:"subcategory"`
 	SourceType      string                   `json:"sourceType"`
 	Status          string                   `json:"status"`
 	Organization    string                   `json:"organization"`
 	Department      string                   `json:"department"`
+	SubjectName     string                   `json:"subjectName"`
+	ReportType      string                   `json:"reportType"`
 	DocumentDate    *time.Time               `json:"documentDate,omitempty"`
 	Summary         string                   `json:"summary"`
 	AIConclusion    string                   `json:"aiConclusion"`
@@ -131,18 +160,41 @@ type DocumentDTO struct {
 	Files           []DocumentFileDTO        `json:"files,omitempty"`
 	OCRResults      []DocumentOCRResultDTO   `json:"ocrResults,omitempty"`
 	Observations    []DocumentObservationDTO `json:"observations,omitempty"`
+	Medications     []DocumentMedicationDTO  `json:"medications,omitempty"`
 	Analyses        []DocumentAnalysisDTO    `json:"analyses,omitempty"`
 	CreatedAt       time.Time                `json:"createdAt"`
 	UpdatedAt       time.Time                `json:"updatedAt"`
 }
 
 type UpdateDocumentReviewInput struct {
+	Title        string                           `json:"title"`
 	Category     string                           `json:"category"`
+	Categories   []string                         `json:"categories"`
+	Organization string                           `json:"organization"`
+	Department   string                           `json:"department"`
+	SubjectName  string                           `json:"subjectName"`
+	ReportType   string                           `json:"reportType"`
+	DocumentDate *time.Time                       `json:"documentDate"`
 	Summary      string                           `json:"summary"`
 	AIConclusion string                           `json:"aiConclusion"`
 	Confidence   *float64                         `json:"confidence"`
 	Status       string                           `json:"status"`
 	Observations []UpdateDocumentObservationInput `json:"observations"`
+	Medications  []UpdateDocumentMedicationInput  `json:"medications"`
+}
+
+type UpdateDocumentMedicationInput struct {
+	Name          string   `json:"name"`
+	GenericName   string   `json:"genericName"`
+	Specification string   `json:"specification"`
+	Dose          string   `json:"dose"`
+	Frequency     string   `json:"frequency"`
+	Route         string   `json:"route"`
+	Duration      string   `json:"duration"`
+	Quantity      string   `json:"quantity"`
+	Instructions  string   `json:"instructions"`
+	Confidence    *float64 `json:"confidence"`
+	ReviewStatus  string   `json:"reviewStatus"`
 }
 
 type UpdateDocumentObservationInput struct {
@@ -208,6 +260,7 @@ func (s *documentService) importDocument(ctx context.Context, userID uuid.UUID, 
 	}
 
 	now := time.Now()
+	documentDateProvided := input.DocumentDate != nil
 	documentDate := input.DocumentDate
 	if documentDate == nil {
 		documentDate = &now
@@ -229,6 +282,9 @@ func (s *documentService) importDocument(ctx context.Context, userID uuid.UUID, 
 	categoryHint := normalizeDocumentCategory(input.Category, "其他")
 	ocrExtraction := s.ocrProcessor.ExtractFiles(ctx, input.Files)
 	ocrRawText := strings.TrimSpace(ocrExtraction.RawText)
+	ocrSubjectName := extractOCRSubjectName(ocrRawText)
+	ocrOrganization := extractOCROrganization(ocrRawText)
+	ocrReportType := extractOCRReportType(ocrRawText)
 	analysis, analysisErr := s.aiAnalyzer.AnalyzeDocument(ctx, AIAnalyzeDocumentInput{
 		Title:     title,
 		Category:  input.Category,
@@ -243,6 +299,11 @@ func (s *documentService) importDocument(ctx context.Context, userID uuid.UUID, 
 	confidence := 0.35
 	status := "needs_review"
 	modelName := "fallback"
+	organization := strings.TrimSpace(input.Organization)
+	department := strings.TrimSpace(input.Department)
+	subjectName := ocrSubjectName
+	reportType := ocrReportType
+	organization = firstNonEmpty(organization, ocrOrganization)
 	if analysisErr == nil && analysis != nil {
 		if analysis.Category != "" {
 			category = analysis.Category
@@ -255,8 +316,37 @@ func (s *documentService) importDocument(ctx context.Context, userID uuid.UUID, 
 		}
 		confidence = analysis.Confidence
 		modelName = s.aiAnalyzer.ModelName()
+		if strings.HasPrefix(title, "待识别健康资料") && analysis.Title != "" {
+			title = truncateText(analysis.Title, 200)
+		}
+		organization = firstNonEmpty(organization, analysis.Organization)
+		department = firstNonEmpty(department, analysis.Department)
+		subjectName = firstNonEmpty(strings.TrimSpace(analysis.PatientName), subjectName)
+		reportType = firstNonEmpty(strings.TrimSpace(analysis.ReportType), reportType)
+		if !documentDateProvided && analysis.DocumentDate != "" {
+			if parsedDate, err := time.Parse("2006-01-02", analysis.DocumentDate); err == nil {
+				documentDate = &parsedDate
+			}
+		}
 		if confidence >= 0.6 && (len(input.Files) == 0 || ocrRawText != "") {
 			status = "ready"
+		}
+	}
+	if strings.HasPrefix(title, "待识别健康资料") && reportType != "" {
+		title = truncateText(reportType, 200)
+	}
+	memberID := input.MemberID
+	if s.memberService != nil {
+		resolvedMemberID, err := s.memberService.ResolveRecognizedName(ctx, userID, subjectName, memberID)
+		if err != nil {
+			return nil, err
+		}
+		memberID = resolvedMemberID
+		if subjectName == "" && memberID != nil {
+			subjectName, err = s.memberService.NameForID(ctx, userID, *memberID)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -279,13 +369,17 @@ func (s *documentService) importDocument(ctx context.Context, userID uuid.UUID, 
 
 	document := &models.HealthDocument{
 		UserID:       userID,
+		MemberID:     memberID,
 		Title:        title,
 		Category:     category,
+		Categories:   mustJSON([]string{category}, "[]"),
 		Subcategory:  strings.TrimSpace(input.Subcategory),
 		SourceType:   sourceType,
 		Status:       status,
-		Organization: strings.TrimSpace(input.Organization),
-		Department:   strings.TrimSpace(input.Department),
+		Organization: organization,
+		Department:   department,
+		SubjectName:  subjectName,
+		ReportType:   reportType,
 		DocumentDate: documentDate,
 		Summary:      summary,
 		AIConclusion: conclusion,
@@ -336,11 +430,30 @@ func (s *documentService) importDocument(ctx context.Context, userID uuid.UUID, 
 	if err := s.repo.CreateWithArtifacts(ctx, document, documentFiles, ocrResults, analyses, reviewTasks); err != nil {
 		return nil, err
 	}
+	if analysis != nil && len(analysis.Medications) > 0 {
+		medications := make([]models.DocumentMedication, 0, len(analysis.Medications))
+		for _, medication := range analysis.Medications {
+			if name := strings.TrimSpace(medication.Name); name != "" {
+				medications = append(medications, models.DocumentMedication{
+					Name: name, GenericName: strings.TrimSpace(medication.GenericName), Specification: strings.TrimSpace(medication.Specification),
+					Dose: strings.TrimSpace(medication.Dose), Frequency: strings.TrimSpace(medication.Frequency), Route: strings.TrimSpace(medication.Route),
+					Duration: strings.TrimSpace(medication.Duration), Quantity: strings.TrimSpace(medication.Quantity), Instructions: strings.TrimSpace(medication.Instructions),
+					Confidence: &confidence, ReviewStatus: "pending",
+				})
+			}
+		}
+		if err := s.repo.ReplaceMedications(ctx, userID, document.ID, medications); err != nil {
+			return nil, err
+		}
+	}
 
 	var report *ReportDTO
 	if options.CreateLegacyReport {
 		report, err = s.createLegacyReport(ctx, userID, document, input)
 		if err != nil {
+			return nil, err
+		}
+		if err := s.repo.LinkLegacyReport(ctx, userID, document.ID, report.ID); err != nil {
 			return nil, err
 		}
 	}
@@ -535,6 +648,7 @@ func (s *documentService) syncMetricsFromDocument(ctx context.Context, userID uu
 	metrics = append(metrics, metricInputsFromObservations(observations, observedAt, document.Title, document.ID)...)
 	added := 0
 	for _, metric := range metrics {
+		metric.MemberID = document.MemberID
 		if _, err := s.metricService.Create(ctx, userID, metric); err != nil {
 			return added, err
 		}
@@ -561,6 +675,45 @@ func (s *documentService) Get(ctx context.Context, userID uuid.UUID, documentID 
 		return nil, gorm.ErrRecordNotFound
 	}
 	return s.mapDocumentToDTO(ctx, document)
+}
+
+func (s *documentService) AnalyzeStructured(ctx context.Context, userID uuid.UUID, documentID uuid.UUID, kind string) (*StructuredAnalysisDTO, error) {
+	document, err := s.repo.FindByID(ctx, documentID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if document == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	if kind != "medications" && kind != "observations" {
+		return nil, errors.New("不支持的结构化解析类型")
+	}
+	content := strings.TrimSpace(strings.Join([]string{latestOCRRawText(document), document.Summary, document.AIConclusion}, "\n"))
+	analysis, err := s.aiAnalyzer.AnalyzeStructured(ctx, kind, content)
+	if err != nil {
+		return nil, err
+	}
+	result := &StructuredAnalysisDTO{Medications: []DocumentMedicationDTO{}, Observations: []DocumentObservationDTO{}}
+	for _, item := range analysis.Medications {
+		if name := strings.TrimSpace(item.Name); name != "" {
+			result.Medications = append(result.Medications, DocumentMedicationDTO{
+				ID: uuid.New(), Name: name, GenericName: strings.TrimSpace(item.GenericName), Specification: strings.TrimSpace(item.Specification),
+				Dose: strings.TrimSpace(item.Dose), Frequency: strings.TrimSpace(item.Frequency), Route: strings.TrimSpace(item.Route),
+				Duration: strings.TrimSpace(item.Duration), Quantity: strings.TrimSpace(item.Quantity), Instructions: strings.TrimSpace(item.Instructions), ReviewStatus: "pending",
+			})
+		}
+	}
+	for _, item := range analysis.Observations {
+		if name := strings.TrimSpace(item.Name); name != "" {
+			result.Observations = append(result.Observations, DocumentObservationDTO{
+				ID: uuid.New(), Name: name, NormalizedName: normalizeObservationName(name), ValueNumber: item.ValueNumber,
+				ValueText: strings.TrimSpace(item.ValueText), Unit: strings.TrimSpace(item.Unit), ReferenceLow: item.ReferenceLow,
+				ReferenceHigh: item.ReferenceHigh, ReferenceText: strings.TrimSpace(item.ReferenceText),
+				AbnormalFlag: normalizeAbnormalFlag(item.AbnormalFlag), ReviewStatus: "pending",
+			})
+		}
+	}
+	return result, nil
 }
 
 func (s *documentService) GetByLegacyReport(ctx context.Context, userID uuid.UUID, reportID uuid.UUID) (*DocumentDTO, error) {
@@ -627,16 +780,54 @@ func (s *documentService) UpdateReview(ctx context.Context, userID uuid.UUID, do
 			ReviewStatus:   normalizeReviewStatus(observation.ReviewStatus),
 		})
 	}
+	medications := make([]models.DocumentMedication, 0, len(input.Medications))
+	for _, medication := range input.Medications {
+		name := strings.TrimSpace(medication.Name)
+		if name == "" {
+			continue
+		}
+		medications = append(medications, models.DocumentMedication{
+			Name: name, GenericName: strings.TrimSpace(medication.GenericName), Specification: strings.TrimSpace(medication.Specification),
+			Dose: strings.TrimSpace(medication.Dose), Frequency: strings.TrimSpace(medication.Frequency), Route: strings.TrimSpace(medication.Route),
+			Duration: strings.TrimSpace(medication.Duration), Quantity: strings.TrimSpace(medication.Quantity), Instructions: strings.TrimSpace(medication.Instructions),
+			Confidence: medication.Confidence, ReviewStatus: normalizeReviewStatus(medication.ReviewStatus),
+		})
+	}
 
 	fields := map[string]any{
-		"category":      normalizeDocumentCategory(input.Category, document.Category),
+		"title":         firstNonEmpty(strings.TrimSpace(input.Title), document.Title),
+		"organization":  strings.TrimSpace(input.Organization),
+		"department":    strings.TrimSpace(input.Department),
+		"subject_name":  strings.TrimSpace(input.SubjectName),
+		"report_type":   strings.TrimSpace(input.ReportType),
 		"summary":       strings.TrimSpace(input.Summary),
 		"ai_conclusion": strings.TrimSpace(input.AIConclusion),
 		"confidence":    confidence,
 		"status":        status,
 	}
-	if err := s.repo.UpdateReview(ctx, userID, document.ID, fields, observations); err != nil {
+	categories := normalizeDocumentCategories(input.Categories, input.Category, document.Category)
+	fields["category"] = categories[0]
+	fields["categories"] = mustJSON(categories, "[]")
+	if input.DocumentDate != nil {
+		fields["document_date"] = input.DocumentDate
+	}
+	if err := s.repo.UpdateReview(ctx, userID, document.ID, fields, observations, medications); err != nil {
 		return nil, err
+	}
+	if reportID := legacyReportIDFromMetadata(document.Metadata); reportID != nil {
+		title := fields["title"].(string)
+		organization := fields["organization"].(string)
+		if organization == "" {
+			organization = legacyReportOrganization(status)
+		}
+		_, err := s.reportService.Update(ctx, userID, *reportID, UpdateReportInput{
+			Title:      &title,
+			Hospital:   &organization,
+			ReportDate: input.DocumentDate,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if s.metricService != nil {
@@ -648,6 +839,7 @@ func (s *documentService) UpdateReview(ctx context.Context, userID uuid.UUID, do
 			observedAt = *document.DocumentDate
 		}
 		for _, metric := range metricInputsFromObservations(observations, observedAt, document.Title, document.ID) {
+			metric.MemberID = document.MemberID
 			if _, err := s.metricService.Create(ctx, userID, metric); err != nil {
 				return nil, err
 			}
@@ -655,6 +847,19 @@ func (s *documentService) UpdateReview(ctx context.Context, userID uuid.UUID, do
 	}
 
 	return s.Get(ctx, userID, document.ID)
+}
+
+func legacyReportIDFromMetadata(metadata datatypes.JSON) *uuid.UUID {
+	var values map[string]any
+	if json.Unmarshal(metadata, &values) != nil {
+		return nil
+	}
+	value, _ := values["legacyReportId"].(string)
+	parsed, err := uuid.Parse(value)
+	if err != nil {
+		return nil
+	}
+	return &parsed
 }
 
 func (s *documentService) createLegacyReport(ctx context.Context, userID uuid.UUID, document *models.HealthDocument, input ImportDocumentInput) (*ReportDTO, error) {
@@ -673,21 +878,42 @@ func (s *documentService) createLegacyReport(ctx context.Context, userID uuid.UU
 		})
 	}
 
-	organization := firstNonEmpty(document.Organization, "AI 待识别")
+	organization := firstNonEmpty(document.Organization, legacyReportOrganization(document.Status))
 	reportDate := time.Now()
 	if document.DocumentDate != nil {
 		reportDate = *document.DocumentDate
 	}
 
 	return s.reportService.Create(ctx, userID, CreateReportInput{
+		MemberID:    document.MemberID,
 		Title:       document.Title,
 		Hospital:    organization,
 		ReportDate:  reportDate,
 		Files:       reportFiles,
-		Tags:        uniqueStrings([]string{"AI待处理", document.Category, document.Status}),
+		Tags:        uniqueStrings([]string{legacyReportStatusTag(document.Status), document.Category}),
 		Notes:       buildLegacyReportNotes(document, input),
 		IsEncrypted: true,
 	})
+}
+
+func legacyReportOrganization(status string) string {
+	if status == "ready" {
+		return "AI 已解析"
+	}
+	return "AI 待识别"
+}
+
+func legacyReportStatusTag(status string) string {
+	switch status {
+	case "ready":
+		return "AI已解析"
+	case "needs_review":
+		return "AI待复核"
+	case "failed":
+		return "AI解析失败"
+	default:
+		return "AI待处理"
+	}
 }
 
 func (s *documentService) mapDocumentToDTO(ctx context.Context, document *models.HealthDocument) (*DocumentDTO, error) {
@@ -751,16 +977,28 @@ func (s *documentService) mapDocumentToDTO(ctx context.Context, document *models
 			ReviewStatus:   observation.ReviewStatus,
 		})
 	}
+	medications := make([]DocumentMedicationDTO, 0, len(document.Medications))
+	for _, medication := range document.Medications {
+		medications = append(medications, DocumentMedicationDTO{
+			ID: medication.ID, Name: medication.Name, GenericName: medication.GenericName, Specification: medication.Specification,
+			Dose: medication.Dose, Frequency: medication.Frequency, Route: medication.Route, Duration: medication.Duration,
+			Quantity: medication.Quantity, Instructions: medication.Instructions, Confidence: medication.Confidence, ReviewStatus: medication.ReviewStatus,
+		})
+	}
 
 	return &DocumentDTO{
 		ID:              document.ID,
+		MemberID:        document.MemberID,
 		Title:           document.Title,
-		Category:        aiFields.Category,
+		Category:        document.Category,
+		Categories:      normalizeDocumentCategories(parseDocumentCategories(document.Categories), document.Category, document.Category),
 		Subcategory:     document.Subcategory,
 		SourceType:      document.SourceType,
 		Status:          document.Status,
 		Organization:    document.Organization,
 		Department:      document.Department,
+		SubjectName:     document.SubjectName,
+		ReportType:      document.ReportType,
 		DocumentDate:    document.DocumentDate,
 		Summary:         aiFields.Summary,
 		AIConclusion:    aiFields.Conclusion,
@@ -769,6 +1007,7 @@ func (s *documentService) mapDocumentToDTO(ctx context.Context, document *models
 		Files:           files,
 		OCRResults:      ocrResults,
 		Observations:    observations,
+		Medications:     medications,
 		Analyses:        analyses,
 		CreatedAt:       document.CreatedAt,
 		UpdatedAt:       document.UpdatedAt,
@@ -786,6 +1025,34 @@ func buildDocumentTitle(input ImportDocumentInput, documentDate time.Time) strin
 		return "自然语言健康记录 · " + documentDate.Format("2006-01-02")
 	}
 	return "待识别健康资料 · " + documentDate.Format("2006-01-02")
+}
+
+func extractOCRSubjectName(text string) string {
+	match := regexp.MustCompile(`(?m)(?:姓名|患者)\s*[:：]\s*([^\s，,；;]{2,30})`).FindStringSubmatch(text)
+	if len(match) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(match[1])
+}
+
+func extractOCROrganization(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if len([]rune(line)) <= 40 && (strings.HasSuffix(line, "医院") || strings.HasSuffix(line, "医疗中心") || strings.HasSuffix(line, "诊所")) {
+			return line
+		}
+	}
+	return ""
+}
+
+func extractOCRReportType(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if len([]rune(line)) <= 30 && (strings.HasSuffix(line, "报告单") || strings.HasSuffix(line, "报告")) {
+			return line
+		}
+	}
+	return ""
 }
 
 func importInputFromReport(report ReportDTO) ImportDocumentInput {
@@ -812,6 +1079,7 @@ func importInputFromReport(report ReportDTO) ImportDocumentInput {
 
 	documentDate := report.ReportDate
 	return ImportDocumentInput{
+		MemberID:     report.MemberID,
 		Title:        report.Title,
 		Category:     categoryFromReport(report),
 		SourceType:   "legacy_report",
@@ -985,6 +1253,41 @@ func normalizeDocumentCategory(value string, fallback string) string {
 	default:
 		return "其他"
 	}
+}
+
+func parseDocumentCategories(value datatypes.JSON) []string {
+	var categories []string
+	if len(value) > 0 {
+		_ = json.Unmarshal(value, &categories)
+	}
+	return categories
+}
+
+func normalizeDocumentCategories(values []string, primary, fallback string) []string {
+	seen := map[string]bool{}
+	result := make([]string, 0, len(values)+1)
+	for _, value := range append(values, primary) {
+		category := normalizeDocumentCategory(value, "")
+		if category != "其他" || strings.TrimSpace(value) == "其他" {
+			if !seen[category] {
+				seen[category] = true
+				result = append(result, category)
+			}
+		}
+	}
+	if len(result) == 0 {
+		result = append(result, normalizeDocumentCategory(fallback, "其他"))
+	}
+	if len(result) > 1 && seen["其他"] {
+		filtered := result[:0]
+		for _, category := range result {
+			if category != "其他" {
+				filtered = append(filtered, category)
+			}
+		}
+		result = filtered
+	}
+	return result
 }
 
 func normalizeDocumentStatus(value string) string {

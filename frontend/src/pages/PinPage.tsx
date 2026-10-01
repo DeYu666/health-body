@@ -38,7 +38,7 @@ export const PinPage: React.FC = () => {
               setPin([])
             }, 1200)
           }
-        } catch (err) {
+        } catch {
           setStatus('error')
           setTimeout(() => {
             setStatus('idle')
@@ -62,7 +62,7 @@ export const PinPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-hero px-4 py-10">
-      <div className="mx-auto flex w-full max-w-md flex-col items-center gap-10 rounded-[32px] bg-white/90 p-6 text-slate-900 shadow-card">
+      <div className="mx-auto flex w-full max-w-md flex-col items-center gap-10 rounded-[32px] bg-white/90 p-6 text-slate-900 shadow-sm">
         <div className="w-full text-left">
           <button
             onClick={() => navigate(-1)}
@@ -95,7 +95,7 @@ export const PinPage: React.FC = () => {
                 }
               }}
               placeholder="your@email.com"
-              className="mt-2 w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+              className="mt-2 w-full rounded-lg border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
             />
           </div>
         )}
@@ -121,7 +121,7 @@ export const PinPage: React.FC = () => {
             <button
               key={number}
               onClick={() => handleDigit(number)}
-              className="aspect-square rounded-2xl border-2 border-slate-200 bg-white text-xl font-semibold text-slate-800 shadow-sm transition hover:-translate-y-[1px] hover:border-primary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"
+              className="aspect-square rounded-lg border-2 border-slate-200 bg-white text-xl font-semibold text-slate-800 shadow-sm transition hover:-translate-y-[1px] hover:border-primary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"
             >
               {number}
             </button>
@@ -129,13 +129,13 @@ export const PinPage: React.FC = () => {
           <div />
           <button
             onClick={() => handleDigit(0)}
-            className="aspect-square rounded-2xl border-2 border-slate-200 bg-white text-xl font-semibold text-slate-800 shadow-sm transition hover:-translate-y-[1px] hover:border-primary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"
+            className="aspect-square rounded-lg border-2 border-slate-200 bg-white text-xl font-semibold text-slate-800 shadow-sm transition hover:-translate-y-[1px] hover:border-primary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"
           >
             0
           </button>
           <button
             onClick={handleDelete}
-            className="aspect-square rounded-2xl border-2 border-slate-200 bg-white text-xl font-semibold text-slate-800 shadow-sm transition hover:-translate-y-[1px] hover:border-danger hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/20"
+            className="aspect-square rounded-lg border-2 border-slate-200 bg-white text-xl font-semibold text-slate-800 shadow-sm transition hover:-translate-y-[1px] hover:border-danger hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/20"
           >
             <FaBackspace className="mx-auto text-lg" />
           </button>
@@ -152,4 +152,3 @@ export const PinPage: React.FC = () => {
     </div>
   )
 }
-

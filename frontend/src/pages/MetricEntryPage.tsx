@@ -1,12 +1,13 @@
 import clsx from 'classnames'
 import dayjs from 'dayjs'
 import { useEffect, useState } from 'react'
-import { FaBrain, FaInfoCircle, FaMagic, FaSave } from 'react-icons/fa'
+import { FaInfoCircle, FaMagic, FaSave } from 'react-icons/fa'
 import { useNavigate, useOutletContext } from 'react-router-dom'
 import type { ChangeEvent, FormEvent } from 'react'
 import type { AppShellContextValue } from '../components/layout/AppShell'
 import { useAppState } from '../context/AppStateContext'
 import type { MetricType } from '../types'
+import { parseMetricText } from '../lib/metricText'
 
 const metricOptions: { value: MetricType; label: string; placeholder: string; unit: string }[] = [
   { value: 'weight', label: '体重 (kg)', placeholder: '请输入体重', unit: 'kg' },
@@ -23,7 +24,7 @@ const metricOptions: { value: MetricType; label: string; placeholder: string; un
 ]
 
 export const MetricEntryPage: React.FC = () => {
-  const { addMetricEntry } = useAppState()
+  const { addMetricEntry, selectedMemberId, activeMember } = useAppState()
   const navigate = useNavigate()
   const { setHeaderConfig } = useOutletContext<AppShellContextValue>()
 
@@ -38,7 +39,7 @@ export const MetricEntryPage: React.FC = () => {
 
   useEffect(() => {
     setHeaderConfig({
-      title: 'AI 记录指标',
+      title: '记录身体指标',
       showBackButton: true,
     })
   }, [setHeaderConfig])
@@ -53,36 +54,13 @@ export const MetricEntryPage: React.FC = () => {
     }
 
     const normalized = text.replace(/\s+/g, ' ')
-    const numberPattern = /(\d+(?:\.\d+)?)/
-    const bloodPressureMatch = normalized.match(/(?:血压|bp)[^\d]*(\d{2,3})\s*[/／]\s*(\d{2,3})/i)
-
-    if (bloodPressureMatch) {
-      setType('blood-pressure')
-      setPrimaryValue(bloodPressureMatch[1])
-      setSecondaryValue(bloodPressureMatch[2])
-    } else if (/血糖|葡萄糖|glucose|glu/i.test(normalized)) {
-      setType('blood-sugar')
-      setPrimaryValue(normalized.match(numberPattern)?.[1] ?? '')
-      setSecondaryValue('')
-    } else if (/体重|weight/i.test(normalized)) {
-      setType('weight')
-      setPrimaryValue(normalized.match(numberPattern)?.[1] ?? '')
-      setSecondaryValue('')
-    } else if (/心率|脉搏|heart/i.test(normalized)) {
-      setType('heart-rate')
-      setPrimaryValue(normalized.match(numberPattern)?.[1] ?? '')
-      setSecondaryValue('')
-    } else if (/体温|temperature/i.test(normalized)) {
-      setType('temperature')
-      setPrimaryValue(normalized.match(numberPattern)?.[1] ?? '')
-      setSecondaryValue('')
-    } else if (/bmi/i.test(normalized)) {
-      setType('bmi')
-      setPrimaryValue(normalized.match(numberPattern)?.[1] ?? '')
-      setSecondaryValue('')
-    } else {
-      setError('暂时无法识别指标类型，请手动选择后保存')
-      setNotes((prev) => (prev ? `${prev}\n${text}` : text))
+    try {
+      const parsed = parseMetricText(normalized)
+      setType(parsed.type)
+      setPrimaryValue(parsed.primary)
+      setSecondaryValue(parsed.secondary)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '无法预填，请手动填写')
       return
     }
 
@@ -97,14 +75,15 @@ export const MetricEntryPage: React.FC = () => {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!primaryValue) {
-      setError('请录入指标数值')
+    if (!primaryValue || !Number.isFinite(Number(primaryValue)) || !dayjs(recordTime).isValid()) {
+      setError('请录入有效的指标数值和测量时间')
       return
     }
     setError(null)
     setStatus('saving')
     try {
       await addMetricEntry({
+        memberId: selectedMemberId,
         metricType: type,
         primaryValue: Number(primaryValue),
         secondaryValue:
@@ -130,26 +109,24 @@ export const MetricEntryPage: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6 bg-white px-4 pb-14 pt-6 md:px-8">
-      <div className="flex items-start gap-3 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
+    <div className="mx-auto max-w-4xl space-y-6 bg-slate-50 px-4 pb-14 pt-5 md:px-6 lg:px-8">
+      <div className="flex items-start gap-3 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-600">
         <FaInfoCircle className="text-primary" />
         <div>
-          <p className="font-semibold text-slate-800">数据将加密保存，仅用于您的个人健康管理</p>
-          <p className="mt-1 text-xs text-slate-400">
-            若同步至医院或家庭医生账户，将额外确认授权。
-          </p>
+          <p className="font-semibold text-slate-800">记录对象：{activeMember?.name ?? '家庭成员'}</p>
+          <p className="mt-1 text-xs text-slate-400">保存后会进入该成员的趋势图表。</p>
         </div>
       </div>
 
-      <section className="space-y-3 rounded-2xl bg-slate-50 p-4">
+      <section className="space-y-3 rounded-lg bg-slate-50 p-4">
         <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-            <FaBrain />
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <FaMagic />
           </div>
           <div>
-            <h2 className="text-sm font-semibold text-slate-800">一句话记录</h2>
+            <h2 className="text-sm font-semibold text-slate-800">文本预填</h2>
             <p className="mt-1 text-xs text-slate-400">
-              先让系统预填，确认后再保存。后续可替换为 AI 解析接口。
+              使用本地规则识别常见指标，确认后再保存。
             </p>
           </div>
         </div>
@@ -157,26 +134,26 @@ export const MetricEntryPage: React.FC = () => {
           value={smartText}
           onChange={(event) => setSmartText(event.target.value)}
           rows={3}
-          placeholder="例如：今天早上血压 125/82；昨天饭后血糖 7.2；体重 72.4"
-          className="w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+          placeholder="每次记录一项，例如：今天8点体重72.4"
+          className="w-full rounded-lg border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
         />
         <button
           type="button"
           onClick={applySmartText}
-          className="flex w-full items-center justify-center gap-2 rounded-xl border border-primary/20 bg-primary/10 px-4 py-3 text-sm font-semibold text-primary transition hover:bg-primary hover:text-white"
+          className="flex w-full items-center justify-center gap-2 rounded-lg border border-primary/20 bg-primary/10 px-4 py-3 text-sm font-semibold text-primary transition hover:bg-primary hover:text-white"
         >
           <FaMagic />
-          智能预填
+          解析并预填
         </button>
       </section>
 
       <form onSubmit={handleSubmit} className="space-y-5">
-        <section className="space-y-4 rounded-2xl bg-slate-50 p-4">
+        <section className="space-y-4 rounded-lg bg-slate-50 p-4">
           <h2 className="text-sm font-semibold text-slate-600">选择指标类型</h2>
           <select
             value={type}
             onChange={handleTypeChange}
-            className="w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+            className="w-full rounded-lg border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
           >
             {metricOptions.map((option) => (
               <option key={option.value} value={option.value}>
@@ -186,7 +163,7 @@ export const MetricEntryPage: React.FC = () => {
           </select>
         </section>
 
-        <section className="space-y-4 rounded-2xl bg-slate-50 p-4">
+        <section className="space-y-4 rounded-lg bg-slate-50 p-4">
           <h2 className="text-sm font-semibold text-slate-600">录入数值</h2>
           <div className="space-y-3">
             <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -200,7 +177,7 @@ export const MetricEntryPage: React.FC = () => {
                   value={primaryValue}
                   onChange={(event) => setPrimaryValue(event.target.value)}
                   placeholder="收缩压"
-                  className="w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  className="w-full rounded-lg border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
                 />
                 <span className="text-sm font-semibold text-slate-400">/</span>
                 <input
@@ -209,7 +186,7 @@ export const MetricEntryPage: React.FC = () => {
                   value={secondaryValue}
                   onChange={(event) => setSecondaryValue(event.target.value)}
                   placeholder="舒张压"
-                  className="w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  className="w-full rounded-lg border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
                 />
               </div>
             ) : (
@@ -219,7 +196,7 @@ export const MetricEntryPage: React.FC = () => {
                 value={primaryValue}
                 onChange={(event) => setPrimaryValue(event.target.value)}
                 placeholder={currentOption.placeholder}
-                className="w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                className="w-full rounded-lg border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
               />
             )}
             <p className="text-xs text-slate-400">
@@ -237,24 +214,24 @@ export const MetricEntryPage: React.FC = () => {
               type="datetime-local"
               value={recordTime}
               onChange={(event) => setRecordTime(event.target.value)}
-              className="mt-2 w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+              className="mt-2 w-full rounded-lg border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
             />
           </div>
         </section>
 
-        <section className="space-y-3 rounded-2xl bg-slate-50 p-4">
+        <section className="space-y-3 rounded-lg bg-slate-50 p-4">
           <h2 className="text-sm font-semibold text-slate-600">备注（可选）</h2>
           <textarea
             value={notes}
             onChange={(event) => setNotes(event.target.value)}
             rows={4}
             placeholder="例如：饭后 2 小时测量血糖、运动后心率等。"
-            className="w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+            className="w-full rounded-lg border-2 border-slate-200 bg-white px-4 py-3 text-sm font-medium transition focus:border-primary focus:ring-2 focus:ring-primary/20"
           />
         </section>
 
         {error ? (
-          <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+          <div className="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
             {error}
           </div>
         ) : null}
@@ -263,7 +240,7 @@ export const MetricEntryPage: React.FC = () => {
           type="submit"
           disabled={status === 'saving'}
           className={clsx(
-            'flex w-full items-center justify-center gap-2 rounded-2xl bg-primary py-4 text-base font-semibold text-white shadow-lg shadow-primary/30 transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:bg-primary/60',
+            'flex w-full items-center justify-center gap-2 rounded-lg bg-primary py-4 text-base font-semibold text-white shadow-lg shadow-primary/30 transition hover:bg-primary-dark disabled:cursor-not-allowed disabled:bg-primary/60',
           )}
         >
           <FaSave className="text-lg" />
@@ -271,7 +248,7 @@ export const MetricEntryPage: React.FC = () => {
         </button>
 
         {status === 'success' ? (
-          <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
+          <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
             已保存，您可在“我的指标”中查看趋势图表。
           </div>
         ) : null}
