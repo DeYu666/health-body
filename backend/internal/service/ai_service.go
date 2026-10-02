@@ -1,0 +1,302 @@
+package service
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/example/phr-backend/internal/config"
+)
+
+var ErrAIUnavailable = errors.New("ai analyzer unavailable")
+
+type AIAnalyzer interface {
+	AnalyzeDocument(ctx context.Context, input AIAnalyzeDocumentInput) (*AIAnalyzeDocumentOutput, error)
+	AnalyzeStructured(ctx context.Context, kind, content string) (*AIStructuredOutput, error)
+	ModelName() string
+}
+
+type AIStructuredOutput struct {
+	Medications  []AIExtractedMedication  `json:"medications"`
+	Observations []AIExtractedObservation `json:"observations"`
+}
+
+type AIExtractedObservation struct {
+	Name          string   `json:"name"`
+	ValueNumber   *float64 `json:"valueNumber"`
+	ValueText     string   `json:"valueText"`
+	Unit          string   `json:"unit"`
+	ReferenceLow  *float64 `json:"referenceLow"`
+	ReferenceHigh *float64 `json:"referenceHigh"`
+	ReferenceText string   `json:"referenceText"`
+	AbnormalFlag  string   `json:"abnormalFlag"`
+}
+
+type AIAnalyzeDocumentInput struct {
+	Title     string
+	Category  string
+	Note      string
+	OCRText   string
+	FileCount int
+}
+
+type AIAnalyzeDocumentOutput struct {
+	Summary      string
+	Conclusion   string
+	Category     string
+	Confidence   float64
+	Title        string
+	PatientName  string
+	ReportType   string
+	Organization string
+	Department   string
+	DocumentDate string
+	Medications  []AIExtractedMedication
+}
+
+type AIExtractedMedication struct {
+	Name          string `json:"name"`
+	GenericName   string `json:"genericName"`
+	Specification string `json:"specification"`
+	Dose          string `json:"dose"`
+	Frequency     string `json:"frequency"`
+	Route         string `json:"route"`
+	Duration      string `json:"duration"`
+	Quantity      string `json:"quantity"`
+	Instructions  string `json:"instructions"`
+}
+
+type sensenovaAIAnalyzer struct {
+	apiKey  string
+	baseURL string
+	model   string
+	client  *http.Client
+}
+
+func NewAIAnalyzer(cfg *config.Config) AIAnalyzer {
+	return &sensenovaAIAnalyzer{
+		apiKey:  strings.TrimSpace(cfg.AI.SenseNovaAPIKey),
+		baseURL: strings.TrimRight(strings.TrimSpace(cfg.AI.SenseNovaBaseURL), "/"),
+		model:   strings.TrimSpace(cfg.AI.SenseNovaSmartModel),
+		client:  &http.Client{Timeout: 45 * time.Second},
+	}
+}
+
+func (a *sensenovaAIAnalyzer) ModelName() string {
+	if a.model == "" {
+		return "sensenova"
+	}
+	return a.model
+}
+
+func (a *sensenovaAIAnalyzer) AnalyzeDocument(ctx context.Context, input AIAnalyzeDocumentInput) (*AIAnalyzeDocumentOutput, error) {
+	if a.apiKey == "" || a.baseURL == "" || a.model == "" {
+		return nil, ErrAIUnavailable
+	}
+
+	content := strings.TrimSpace(input.OCRText)
+	note := strings.TrimSpace(input.Note)
+	if note != "" && note != content {
+		content = strings.TrimSpace(content + "\n\n用户补充：" + note)
+	}
+	if content == "" {
+		return nil, ErrAIUnavailable
+	}
+	content = truncateText(content, 12000)
+
+	requestBody := map[string]any{
+		"model": a.model,
+		"messages": []map[string]string{
+			{
+				"role":    "system",
+				"content": "你是家庭健康档案助手。只基于用户提供的资料做整理，不给诊断结论。请输出 JSON，字段为 title、patientName、reportType、organization、department、documentDate、summary、conclusion、category、confidence、medications。documentDate 使用 YYYY-MM-DD，无法确认的字段返回空字符串。category 只能是体检、检验、影像、病历、用药、其他之一。medications 必须是数组；处方或用药资料中每个药品输出 name、genericName、specification、dose、frequency、route、duration、quantity、instructions，未识别则返回空数组，禁止猜测。",
+			},
+			{
+				"role":    "user",
+				"content": fmt.Sprintf("标题：%s\n分类提示：%s\n文件数：%d\n资料内容：\n%s", input.Title, input.Category, input.FileCount, content),
+			},
+		},
+		"temperature": 0.2,
+	}
+
+	payload, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/chat/completions", bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+a.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return nil, fmt.Errorf("ai analyzer request failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	var apiResp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+	if len(apiResp.Choices) == 0 || strings.TrimSpace(apiResp.Choices[0].Message.Content) == "" {
+		return nil, ErrAIUnavailable
+	}
+
+	return parseAIAnalysisContent(apiResp.Choices[0].Message.Content, input.Category), nil
+}
+
+func (a *sensenovaAIAnalyzer) AnalyzeStructured(ctx context.Context, kind, content string) (*AIStructuredOutput, error) {
+	if a.apiKey == "" || a.baseURL == "" || a.model == "" || strings.TrimSpace(content) == "" {
+		return nil, ErrAIUnavailable
+	}
+	prompt := "你是医疗文档结构化抽取器。只提取原文明确出现的信息，不做医学推断，不补全缺失值，不改写药名或指标名。只输出合法 JSON，不输出 Markdown。"
+	if kind == "medications" {
+		prompt += ` 输出 {"medications":[]}。每种药单独一项，字段固定为 name、genericName、specification、dose、frequency、route、duration、quantity、instructions。name 为处方中的药品名称；dose 只写单次剂量；frequency 保留“每日2次”等原意；route 写口服/外用/静滴等；无法确认的字段用空字符串。相同药品不同用法不得合并。`
+	} else {
+		prompt += ` 输出 {"observations":[]}。每个检验或体征指标单独一项，字段固定为 name、valueNumber、valueText、unit、referenceLow、referenceHigh、referenceText、abnormalFlag。数值明确时 valueNumber 为数字，否则为 null；valueText 保留原始结果；abnormalFlag 只能是 high、low、normal、unknown，必须依据原文箭头、异常标记或参考范围判断，不能猜测。不要把诊断、症状、药品当作指标。`
+	}
+	requestBody := map[string]any{
+		"model":       a.model,
+		"messages":    []map[string]string{{"role": "system", "content": prompt}, {"role": "user", "content": truncateText(content, 12000)}},
+		"temperature": 0.1,
+	}
+	payload, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/chat/completions", bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+a.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("ai structured request failed: %s", resp.Status)
+	}
+	var apiResp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+	if len(apiResp.Choices) == 0 {
+		return nil, ErrAIUnavailable
+	}
+	text := strings.TrimSpace(apiResp.Choices[0].Message.Content)
+	if start, end := strings.Index(text, "{"), strings.LastIndex(text, "}"); start >= 0 && end > start {
+		text = text[start : end+1]
+	}
+	var output AIStructuredOutput
+	if err := json.Unmarshal([]byte(text), &output); err != nil {
+		return nil, fmt.Errorf("parse structured ai response: %w", err)
+	}
+	return &output, nil
+}
+
+func parseAIAnalysisContent(content string, fallbackCategory string) *AIAnalyzeDocumentOutput {
+	text := strings.TrimSpace(content)
+	jsonText := text
+	if start := strings.Index(text, "{"); start >= 0 {
+		if end := strings.LastIndex(text, "}"); end > start {
+			jsonText = text[start : end+1]
+		}
+	}
+
+	var parsed struct {
+		Summary      string                  `json:"summary"`
+		Conclusion   string                  `json:"conclusion"`
+		Category     string                  `json:"category"`
+		Confidence   any                     `json:"confidence"`
+		Title        string                  `json:"title"`
+		PatientName  string                  `json:"patientName"`
+		ReportType   string                  `json:"reportType"`
+		Organization string                  `json:"organization"`
+		Department   string                  `json:"department"`
+		DocumentDate string                  `json:"documentDate"`
+		Medications  []AIExtractedMedication `json:"medications"`
+	}
+	if err := json.Unmarshal([]byte(jsonText), &parsed); err == nil {
+		return &AIAnalyzeDocumentOutput{
+			Summary:      strings.TrimSpace(parsed.Summary),
+			Conclusion:   strings.TrimSpace(parsed.Conclusion),
+			Category:     normalizeDocumentCategory(parsed.Category, fallbackCategory),
+			Confidence:   clampConfidence(parseAIConfidence(parsed.Confidence)),
+			Title:        strings.TrimSpace(parsed.Title),
+			PatientName:  strings.TrimSpace(parsed.PatientName),
+			ReportType:   strings.TrimSpace(parsed.ReportType),
+			Organization: strings.TrimSpace(parsed.Organization),
+			Department:   strings.TrimSpace(parsed.Department),
+			DocumentDate: strings.TrimSpace(parsed.DocumentDate),
+			Medications:  parsed.Medications,
+		}
+	}
+
+	return &AIAnalyzeDocumentOutput{
+		Summary:    truncateText(text, 1600),
+		Conclusion: truncateText(text, 1600),
+		Category:   normalizeDocumentCategory("", fallbackCategory),
+		Confidence: 0.45,
+	}
+}
+
+func clampConfidence(value float64) float64 {
+	if value <= 0 {
+		return 0.45
+	}
+	if value > 1 {
+		return 1
+	}
+	return value
+}
+
+func parseAIConfidence(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case string:
+		switch strings.TrimSpace(typed) {
+		case "高", "high", "High", "HIGH":
+			return 0.85
+		case "中", "medium", "Medium", "MEDIUM":
+			return 0.65
+		case "低", "low", "Low", "LOW":
+			return 0.45
+		default:
+			parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+			if err == nil {
+				return parsed
+			}
+		}
+	}
+	return 0.45
+}
